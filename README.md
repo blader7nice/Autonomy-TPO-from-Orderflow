@@ -42,3 +42,9 @@ Environment variables are documented in `.env.example`. Variables can be overrid
 command, for example `make bootstrap DAYS=7 SYMBOLS=BTCUSDT`.
 
 The commands for later phases are added here as each phase is completed.
+
+## Test fixtures
+
+All files under `tests/` are synthetic tapes built by `tests/helpers.py` in the
+(UNVERIFIED) Binance formats. They are not market data and are used only to test parsing,
+aggregation, gap handling and the live state machine.
