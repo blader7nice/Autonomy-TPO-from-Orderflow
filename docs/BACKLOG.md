@@ -10,3 +10,4 @@
 - More symbols.
 - Automatic trade execution.
 - Microsecond-resolution sub-minute footprint (the sequence of trades inside a minute).
+- Single-print (TPO) detection and flagging.

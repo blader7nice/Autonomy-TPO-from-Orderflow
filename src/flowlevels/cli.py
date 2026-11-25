@@ -162,6 +162,46 @@ def _cmd_live(args: argparse.Namespace) -> int:
     return _run(go())
 
 
+def _cmd_levels(args: argparse.Namespace) -> int:
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.levels.report import levels_at, parse_ts, render_levels
+
+    settings, cfg = _setup()
+    print(
+        render_levels(
+            levels_at(ParquetStore(settings.data_dir), cfg, args.symbol, parse_ts(args.ts))
+        )
+    )
+    return 0
+
+
+def _cmd_footprint(args: argparse.Namespace) -> int:
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.levels.report import parse_ts, render_footprint
+
+    settings, cfg = _setup()
+    print(
+        render_footprint(
+            ParquetStore(settings.data_dir), cfg, args.symbol, parse_ts(args.ts), args.res
+        )
+    )
+    return 0
+
+
+def _cmd_sanity_plots(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.levels.report import pick_days, sanity_plot
+
+    settings, cfg = _setup()
+    store = ParquetStore(settings.data_dir)
+    for sym in args.symbols:
+        for day in pick_days(store, sym, args.n_days, args.seed):
+            print(sanity_plot(store, cfg, sym, day, Path(args.out)))
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -189,6 +229,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
     p.add_argument("--duration", type=float, default=0, help="Seconds; 0 = forever")
     p.add_argument("--no-resume", action="store_true")
+    p = add("levels", _cmd_levels, "Print levels and zones as of a timestamp (UTC)")
+    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--ts", required=True, help="ISO time, e.g. 2026-11-20T14:00")
+    p = add("footprint", _cmd_footprint, "Print the footprint of the bar containing --ts")
+    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--ts", required=True)
+    p.add_argument("--res", default="5m", choices=["1m", "3m", "5m", "15m", "1h"])
+    p = add("sanity-plots", _cmd_sanity_plots, "PNG of random days with levels + VWAP bands")
+    p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p.add_argument("--n-days", type=int, default=3)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--out", default="docs/sanity")
     return parser
 
 

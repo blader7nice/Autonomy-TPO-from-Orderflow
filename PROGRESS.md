@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **2 — footprint + levels** (next)
+Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the VPS after Phase 1 acceptance)
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -45,3 +45,28 @@ Current phase: **2 — footprint + levels** (next)
   - Every WS/REST payload assumption is UNVERIFIED (D-009).
   - Possible kline residuals to investigate on real data: trades in klines that are not
     in aggTrades (for example RPI or special matches), if any. Not verified.
+
+## Phase 2 — Footprint + levels ✅ code / ⏳ real-data sanity plots (2026-11-25)
+- Done:
+  - `footprint.bars`: exact 1m → 3m/5m/15m/1h aggregation of footprint and OHLCV;
+    delta, CVD (continuous and session-reset); contiguous ladders; diagonal and stacked
+    imbalances; bar POC.
+  - `levels.profile`: TPO and volume profiles, POC and value area (dual-row rule, ties),
+    HVN/LVN.
+  - `levels.vwap`: anchored daily, weekly and monthly VWAP with ±1σ and ±2σ bands from
+    exact running sums.
+  - `levels.engine`: prior-day TPO and VP, prior-week VP, PDH/PDL, PWH/PWL, dPOC, naked
+    POCs, VWAPs, ATR(1h), confluence zones (label, score, tolerance).
+  - CLI and make targets: `levels --ts`, `footprint --ts --res`, `sanity-plots`.
+- Verified (66 tests): hand-computed fixtures for aggregation, delta/CVD with session
+  reset, imbalances and stacks, POC tie-breaks, value-area expansion and ties, TPO counts,
+  HVN/LVN, VWAP σ, confluence clustering. Aggregation 1m → res equals direct computation.
+  **No-lookahead property test**: levels at a random t from the full data equal levels
+  from trades truncated at t, which include a partial open minute. This test found the
+  non-deterministic float summation fixed in D-017.
+- Pending on the VPS: `make sanity-plots` (3 random real days per symbol into
+  docs/sanity/) and `make levels TS=...` spot checks against TradingView, after
+  `make bootstrap`.
+- Open issues: `compute_levels` recomputes everything from frames on every call. Prior-
+  session levels are constant within a session and should be cached per (symbol, day)
+  before the Phase 3 bar-by-bar backtest; profile this first.

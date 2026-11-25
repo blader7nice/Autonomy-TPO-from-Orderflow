@@ -40,3 +40,10 @@ def test_cli_info(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     monkeypatch.chdir(ROOT)
     assert main(["info"]) == 0
     assert "config" in capsys.readouterr().out
+
+
+def test_tpo_tick_must_be_bucket_multiple() -> None:
+    with pytest.raises(ValueError, match="tpo_tick"):
+        AppConfig.model_validate(
+            {"version": 1, "symbols": {"X": {"exchange_tick": 0.1, "bucket": 10, "tpo_tick": 15}}}
+        )

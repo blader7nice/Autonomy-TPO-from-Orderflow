@@ -31,6 +31,9 @@ class SymbolConfig(_Strict):
             ratio = getattr(self, name) / self.exchange_tick
             if abs(ratio - round(ratio)) > 1e-9:
                 raise ValueError(f"{name} must be a multiple of exchange_tick")
+        r = self.tpo_tick / self.bucket
+        if r < 1 - 1e-9 or abs(r - round(r)) > 1e-9:
+            raise ValueError("tpo_tick must be a multiple of bucket (volume profile rows)")
         return self
 
 
