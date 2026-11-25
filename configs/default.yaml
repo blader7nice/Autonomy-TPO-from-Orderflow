@@ -1,0 +1,41 @@
+# FLOWLEVELS versioned config. Bump `version` on any change that affects results.
+# The config hash (flowlevels.config.config_hash) is recorded in every report.
+version: 1
+
+symbols:
+  BTCUSDT:
+    exchange_tick: 0.1
+    bucket: 10.0     # footprint bucket, USD (see docs/DECISIONS.md D-004)
+    tpo_tick: 10.0
+  ETHUSDT:
+    exchange_tick: 0.01
+    bucket: 0.5
+    tpo_tick: 0.5
+
+retention:
+  raw_live_ticks_days: 7
+  footprint_1m_days: 30
+
+footprint:
+  imb_ratio: 3.0
+  imb_min_volume: 0.0
+  stack_n: 3
+  baseline_days: 20
+  baseline_slot_minutes: 30
+  baseline_min_samples: 5
+
+levels:
+  tpo_period_minutes: 30
+  value_area_pct: 0.70
+  naked_poc_lookback_days: 10
+  hvn_smoothing_rows: 5
+  hvn_prominence: 0.10
+  atr_period_1h: 14
+  confluence_k_atr: 0.25
+  zone_tolerance_k_atr: 0.15
+  weights: {}        # level_type -> weight; default 1.0
+
+costs:
+  taker_fee: 0.0005
+  maker_fee: 0.0002
+  slippage_buckets: 1.0

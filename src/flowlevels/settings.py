@@ -1,0 +1,53 @@
+"""Runtime settings (environment / .env), validated at startup.
+
+Secrets and machine-specific values live here; research/detector parameters live in the
+versioned YAML config (see flowlevels.config).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import Field, SecretStr, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="FLOWLEVELS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    data_dir: Path = Field(default=Path("data"), description="Root of the data tree")
+    config_path: Path = Field(
+        default=Path("configs/default.yaml"), description="Versioned YAML config"
+    )
+    log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR)$")
+
+    # Exchange endpoints (overridable for tests / mirrors).
+    binance_rest_url: str = "https://fapi.binance.com"
+    binance_ws_url: str = "wss://fstream.binance.com"
+    binance_vision_url: str = "https://data.binance.vision"
+
+    # Alerts (optional until Phase 5; validated when alerts are enabled).
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
+
+    # API (Phase 4/6). Bind to localhost by default; never expose unauthenticated.
+    api_host: str = "127.0.0.1"
+    api_port: int = Field(default=8080, ge=1, le=65535)
+
+
+class SettingsError(RuntimeError):
+    pass
+
+
+def load_settings() -> Settings:
+    """Load settings, converting validation errors into one readable message."""
+    try:
+        return Settings()
+    except ValidationError as exc:  # pragma: no cover - message formatting only
+        lines = [f"  {'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()]
+        raise SettingsError("Invalid FLOWLEVELS settings:\n" + "\n".join(lines)) from exc
