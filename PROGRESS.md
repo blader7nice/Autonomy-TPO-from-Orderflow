@@ -37,6 +37,23 @@ Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the V
 - Numbers: synthetic 3M-trade day takes 0.46 s to parse and 0.29 s to aggregate (dev
   container); footprint is about 15k rows and 0.2 MB zstd per day (synthetic, sparser
   than real data).
+- **VPS acceptance, step 1: `make verify-api` ✅ (2026-11-26).** 11/11 checks PASS. Every
+  item in DATA_SOURCES.md is now VERIFIED, with sources and live evidence. Reality differed
+  in 5 places, all fixed with regression tests (`tests/test_binance_verified.py`, 15 tests):
+  1. WS: the unrouted `wss://fstream.binance.com/stream` is **silent** for aggTrade and
+     forceOrder since 2026-04-23. Default is now `.../market`, and settings reject unrouted
+     URLs (D-021). This was the cause of the first verify-api FAIL.
+  2. aggTrade has new fields `nq` (excludes RPI) and `st`. We keep `q`, which is RPI-inclusive
+     and equals the archive id by id (D-020).
+  3. forceOrder sends the *largest* liquidation per symbol per 1 s, not the latest (SPEC §4.4).
+  4. REST aggTrades serves only the last 48 h (HTTP 400 −4166). The backfill now logs
+     `beyond_rest_lookback` (D-022).
+  5. REST weight is 20 per request against an IP limit of 2400/min. The old 0.05 s pacing
+     would have used ~24k/min on the IP shared with the trading bots. Now 1 req/s, plus a
+     used-weight budget guard (1200/min by default) (D-022).
+  - `m` semantics confirmed in the docs and empirically: buyer-aggressor volume equals the
+    kline taker-buy volume exactly over a full day (117946.8 BTC). The flipped mapping matches
+    0% of minutes. Per-minute residual: aggTrades that straddle a minute boundary (D-023).
 - **Pending on the VPS (acceptance):**
   `make verify-api` → `make bootstrap` → `make validate-klines` → `make live-smoke`.
   Record the results here: per-day timing, disk use, gap report, kline residuals, the

@@ -31,6 +31,7 @@ def _adapter(settings: Settings) -> Any:
         rest_url=settings.binance_rest_url,
         ws_url=settings.binance_ws_url,
         vision_url=settings.binance_vision_url,
+        weight_budget_1m=settings.binance_rest_weight_budget_1m,
     )
 
 

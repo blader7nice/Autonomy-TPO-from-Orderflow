@@ -23,7 +23,7 @@ import polars as pl
 
 from flowlevels.stream.gaps import Gap, GapTracker
 from flowlevels.stream.types import Batch
-from flowlevels.venues.base import VenueAdapter
+from flowlevels.venues.base import RestLookbackExceededError, VenueAdapter
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,9 @@ class LiveConfig:
     backoff_max_s: float = 60.0
     backfill_page: int = 1000
     backfill_max_ids: int = 5_000_000
-    backfill_pause_s: float = 0.05
+    # aggTrades costs 20 weight per page; 1 page/s = 1200/min = half the 2400/min IP limit,
+    # which is shared with other services on the host (the adapter also enforces a budget).
+    backfill_pause_s: float = 1.0
     liquidations: bool = True
 
 
@@ -201,7 +203,7 @@ class LiveSource:
         if gaps:
             gap = gaps[0]
             await self._emit("gap", **gap.to_dict())
-            filled = await self._backfill(batch.symbol, gap)
+            filled, reason = await self._backfill(batch.symbol, gap)
             if filled is not None and filled.height:
                 tracker.observe(filled)
                 out.append(Batch(batch.symbol, "trades", filled))
@@ -209,15 +211,16 @@ class LiveSource:
                 tracker.record_resolved(gap, "rest_backfill")
                 await self._emit("backfill", symbol=batch.symbol, n=filled.height)
             else:
-                await self._emit("backfill_failed", **gap.to_dict())
+                await self._emit("backfill_failed", reason=reason, **gap.to_dict())
         tracker.observe(df)  # records the gap as unresolved if backfill failed
         out.append(Batch(batch.symbol, "trades", df))
         return out
 
-    async def _backfill(self, symbol: str, gap: Gap) -> pl.DataFrame | None:
+    async def _backfill(self, symbol: str, gap: Gap) -> tuple[pl.DataFrame | None, str]:
+        """REST backfill of a gap. Returns (trades or None, failure reason or "")."""
         if gap.missing > self.cfg.backfill_max_ids:
             log.error("gap of %d ids exceeds backfill_max_ids", gap.missing)
-            return None
+            return None, "exceeds_backfill_max_ids"
         frames: list[pl.DataFrame] = []
         next_id = gap.after_id + 1
         try:
@@ -232,7 +235,12 @@ class LiveSource:
                 next_id = int(page["trade_id"][-1]) + 1
                 if next_id < gap.before_id:
                     await self._sleep(self.cfg.backfill_pause_s)
+        except RestLookbackExceededError as exc:
+            # REST only serves the last 48 h; older ids must come from the daily archive
+            # (`make bootstrap`) once it is published.
+            log.error("backfill for %s is beyond the REST lookback: %s", symbol, exc)
+            return (pl.concat(frames) if frames else None), "beyond_rest_lookback"
         except Exception as exc:
             log.error("backfill failed for %s: %r", symbol, exc)
-            return pl.concat(frames) if frames else None
-        return pl.concat(frames) if frames else None
+            return (pl.concat(frames) if frames else None), f"error:{type(exc).__name__}"
+        return (pl.concat(frames) if frames else None), ""

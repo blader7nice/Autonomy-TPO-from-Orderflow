@@ -60,6 +60,8 @@ file. Raw ticks are kept only for a few fixture days.
   funding).
 - Gaps: aggTrade IDs are sequential. On a gap or a reconnect, the missing IDs are backfilled
   from REST aggTrades with `fromId`, then the stream resumes. Every gap is logged.
+  REST only serves the last 48 h; older gaps are filled from the daily archive (D-022).
+- Endpoint: the routed `wss://fstream.binance.com/market` (D-021).
 - The collector handles the forced disconnect at maximum connection lifetime, ping/pong,
   and exponential backoff with jitter.
 - Watchdog: if BTCUSDT has no trades for more than 60 s, send a Telegram alert and
@@ -69,8 +71,9 @@ file. Raw ticks are kept only for a few fixture days.
   until `make verify-api` passes on the VPS.
 
 ### 4.4 Known limitations
-- forceOrder does not deliver every liquidation. Liquidation features are indicative only
-  and never enter the gate statistics.
+- forceOrder does not deliver every liquidation: it sends only the largest one per symbol
+  per 1000 ms (verified 2026-11-26). Liquidation features are indicative only and never enter
+  the gate statistics.
 - A single venue is a proxy for the whole market. There is no L2 orderbook in the MVP.
 - The sub-minute order of trades is dropped once the 1m footprint is built.
 

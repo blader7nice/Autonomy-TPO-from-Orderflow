@@ -15,8 +15,9 @@ import json
 import logging
 import random
 import re
+import time
 import zipfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,11 @@ from flowlevels.stream.types import (
     aggressor_from_is_buyer_maker,
     validate_trades,
 )
-from flowlevels.venues.base import ChecksumMismatchError, DataNotAvailableError
+from flowlevels.venues.base import (
+    ChecksumMismatchError,
+    DataNotAvailableError,
+    RestLookbackExceededError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +65,15 @@ KLINES_CSV_COLUMNS = [
     "taker_buy_quote_volume",
     "ignore",
 ]
-REST_AGGTRADES_MAX_LIMIT = 1000  # UNVERIFIED (docs/DATA_SOURCES.md)
+# VERIFIED 2026-11-26 (docs/DATA_SOURCES.md): limit 1001 -> HTTP 400 code -1130.
+REST_AGGTRADES_MAX_LIMIT = 1000
+# VERIFIED 2026-11-26: GET /fapi/v1/aggTrades has request weight 20 (official SDK docstring,
+# change log; the X-MBX-USED-WEIGHT-1M header grows by 20 per call).
+REST_AGGTRADES_WEIGHT = 20
+# VERIFIED 2026-11-26: fromId older than 48 h -> HTTP 400 code -4166
+# "Search window is restricted to recent 2 days only."
+ERR_SEARCH_WINDOW = -4166
+USED_WEIGHT_HEADER = "x-mbx-used-weight-1m"
 _SHA256_RE = re.compile(r"\b([0-9a-fA-F]{64})\b")
 
 
@@ -168,8 +181,22 @@ def parse_klines_csv(data: bytes) -> pl.DataFrame:
     return df.sort("open_time")
 
 
+def _error_code(resp: httpx.Response) -> int | None:
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    code = body.get("code") if isinstance(body, dict) else None
+    return int(code) if isinstance(code, int) else None
+
+
 def _trade_row_from_payload(d: dict[str, Any]) -> dict[str, Any]:
-    """REST/WS aggTrade payload {a,p,q,f,l,T,m} -> TRADE_SCHEMA row."""
+    """REST/WS aggTrade payload {a,p,q,f,l,T,m} -> TRADE_SCHEMA row.
+
+    `q` includes trades against RPI orders; `nq` (WS/REST since 2025-12-31) excludes them
+    and `st` is the symbol type. Both are ignored: the data.binance.vision CSV only has the
+    RPI-inclusive quantity, and history and live must share one definition (D-020).
+    """
     return {
         "ts_ms": int(d["T"]),
         "trade_id": int(d["a"]),
@@ -219,11 +246,14 @@ class BinanceUSDM:
     def __init__(
         self,
         rest_url: str = "https://fapi.binance.com",
-        ws_url: str = "wss://fstream.binance.com",
+        ws_url: str = "wss://fstream.binance.com/market",
         vision_url: str = "https://data.binance.vision",
         http: httpx.AsyncClient | None = None,
         max_retries: int = 5,
         retry_base_s: float = 1.0,
+        weight_budget_1m: int = 1200,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self.rest_url = rest_url.rstrip("/")
         self.ws_url = ws_url.rstrip("/")
@@ -231,6 +261,13 @@ class BinanceUSDM:
         self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0))
         self.max_retries = max_retries
         self.retry_base_s = retry_base_s
+        # Operational rate limiting only (never market logic): the local wall clock is
+        # used to wait for the next 1-minute weight window.
+        self.weight_budget_1m = weight_budget_1m
+        self._sleep = sleep
+        self._wall_clock = wall_clock
+        self.last_used_weight_1m: int | None = None
+        self.weight_waits = 0
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -244,21 +281,46 @@ class BinanceUSDM:
                 if attempt == self.max_retries:
                     raise
                 log.warning("GET %s failed (%s); retry %d", url, exc, attempt + 1)
-                await asyncio.sleep(self._backoff(attempt))
+                await self._sleep(self._backoff(attempt))
                 continue
             if resp.status_code == 404:
                 raise DataNotAvailableError(url)
+            if resp.status_code == 400 and _error_code(resp) == ERR_SEARCH_WINDOW:
+                raise RestLookbackExceededError(f"{url}: {resp.text[:200]}")
             if resp.status_code in (418, 451):
                 resp.raise_for_status()  # ban / restricted location: never retry
             if resp.status_code == 429 or resp.status_code >= 500:
                 if attempt == self.max_retries:
                     resp.raise_for_status()
                 retry_after = float(resp.headers.get("Retry-After", 0) or 0)
-                await asyncio.sleep(max(retry_after, self._backoff(attempt)))
+                await self._sleep(max(retry_after, self._backoff(attempt)))
                 continue
             resp.raise_for_status()
+            await self._respect_weight(resp)
             return resp
         raise AssertionError("unreachable")
+
+    async def _respect_weight(self, resp: httpx.Response) -> None:
+        """Pause until the next 1-minute window when the IP's used weight reaches the budget.
+
+        The weight limit is per IP and shared with every other process on this host, so
+        this process stops at `weight_budget_1m` (default: half of the 2400 limit).
+        """
+        raw = resp.headers.get(USED_WEIGHT_HEADER)
+        if raw is None:
+            return
+        used = int(raw)
+        self.last_used_weight_1m = used
+        if used + REST_AGGTRADES_WEIGHT > self.weight_budget_1m:
+            wait = 60.0 - (self._wall_clock() % 60.0) + 1.0
+            self.weight_waits += 1
+            log.warning(
+                "REST used weight %d near budget %d; pausing %.1fs",
+                used,
+                self.weight_budget_1m,
+                wait,
+            )
+            await self._sleep(wait)
 
     def _backoff(self, attempt: int) -> float:
         base: float = self.retry_base_s * (2**attempt)
@@ -341,6 +403,7 @@ class BinanceUSDM:
         import websockets
 
         async with websockets.connect(url, ping_interval=None, max_size=2**22) as ws:
-            # Server sends pings; the websockets library replies with pongs automatically.
+            # VERIFIED 2026-11-26: the server pings every 3 min and disconnects if no pong
+            # arrives within 10 min; the websockets library answers pings automatically.
             async for msg in ws:
                 yield msg

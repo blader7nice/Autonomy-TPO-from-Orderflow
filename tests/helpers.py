@@ -141,12 +141,14 @@ class FakeAdapter:
         connections: list[list[str | Exception]],
         symbol: str = "BTCUSDT",
         rest_fail: bool = False,
+        rest_error: Exception | None = None,
     ) -> None:
         self.tape = tape
         self.connections = connections
         self.symbol = symbol
         self.rest_calls: list[int] = []
         self.rest_fail = rest_fail
+        self.rest_error = rest_error
         self.n_connect = 0
 
     def live_url(self, symbols: list[str], liquidations: bool = True) -> str:
@@ -170,6 +172,8 @@ class FakeAdapter:
 
     async def fetch_trades_from_id(self, symbol: str, from_id: int, limit: int) -> pl.DataFrame:
         self.rest_calls.append(from_id)
+        if self.rest_error is not None:
+            raise self.rest_error
         if self.rest_fail:
             raise ConnectionError("rest down")
         return self.tape.filter(pl.col("trade_id") >= from_id).head(limit)

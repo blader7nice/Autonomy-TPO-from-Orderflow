@@ -20,6 +20,10 @@ class ChecksumMismatchError(RuntimeError):
     pass
 
 
+class RestLookbackExceededError(RuntimeError):
+    """The REST trade history no longer covers the requested ids (older than ~48 h)."""
+
+
 class VenueAdapter(Protocol):
     name: str
 
