@@ -56,20 +56,74 @@ class LevelsConfig(_Strict):
     value_area_pct: float = Field(default=0.70, gt=0, lt=1)
     naked_poc_lookback_days: int = Field(default=10, ge=1)
     hvn_smoothing_rows: int = Field(default=5, ge=1, description="Odd moving-average window")
-    hvn_prominence: float = Field(default=0.10, ge=0, description="Fraction of max volume")
+    hvn_min_prominence: float = Field(
+        default=0.05,
+        ge=0,
+        description="Minimum peak/valley prominence as a fraction of the smoothed profile max",
+    )
+    hvn_min_distance_k_atr: float = Field(
+        default=0.5, ge=0, description="Minimum distance between nodes of one kind, x ATR(1h)"
+    )
+    hvn_top_n: int = Field(default=3, ge=0, description="Max HVNs per profile, by prominence")
+    lvn_top_n: int = Field(default=3, ge=0, description="Max LVNs per profile, by prominence")
     atr_period_1h: int = Field(default=14, ge=1)
-    confluence_k_atr: float = Field(default=0.25, gt=0)
-    zone_tolerance_k_atr: float = Field(default=0.15, ge=0)
+    confluence_k_atr: float = Field(
+        default=0.25, gt=0, description="Max distance of a member from the zone anchor, x ATR"
+    )
+    zone_tolerance_k_atr: float = Field(default=0.10, ge=0)
+    zone_max_width_k_atr: float = Field(
+        default=0.5, gt=0, description="Hard cap on zone width (high - low incl. tolerance), x ATR"
+    )
     weights: dict[str, float] = Field(default_factory=dict, description="Level-type weights")
+
+    @model_validator(mode="after")
+    def _zone_width(self) -> LevelsConfig:
+        if self.zone_max_width_k_atr <= 2 * self.zone_tolerance_k_atr:
+            raise ValueError("zone_max_width_k_atr must exceed 2 x zone_tolerance_k_atr")
+        return self
 
     def weight(self, level_type: str) -> float:
         return self.weights.get(level_type, 1.0)
 
 
+class FeeProfile(_Strict):
+    venue: str = Field(min_length=1, description="Execution venue the fees apply to")
+    taker_fee: float = Field(ge=0, description="Fraction of notional per side")
+    maker_fee: float = Field(description="Fraction of notional per side (negative = rebate)")
+    tier: str = Field(min_length=1)
+    as_of: str = Field(min_length=1, description="Date the rates were checked (YYYY-MM-DD)")
+    source: str = Field(min_length=1, description="Where the rates come from")
+
+
 class CostsConfig(_Strict):
-    taker_fee: float = Field(default=0.0005, ge=0)
-    maker_fee: float = Field(default=0.0002, ge=0)
+    """Execution costs. Signals come from Binance USD-M; fees are those of the execution venue.
+
+    `fee_profile` selects one of `fee_profiles`; results record the profile name.
+    """
+
+    fee_profile: str
+    fee_profiles: dict[str, FeeProfile]
     slippage_buckets: float = Field(default=1.0, ge=0)
+
+    @model_validator(mode="after")
+    def _known_profile(self) -> CostsConfig:
+        if self.fee_profile not in self.fee_profiles:
+            raise ValueError(
+                f"costs.fee_profile {self.fee_profile!r} not in {sorted(self.fee_profiles)}"
+            )
+        return self
+
+    @property
+    def fees(self) -> FeeProfile:
+        return self.fee_profiles[self.fee_profile]
+
+    @property
+    def taker_fee(self) -> float:
+        return self.fees.taker_fee
+
+    @property
+    def maker_fee(self) -> float:
+        return self.fees.maker_fee
 
 
 class DataQualityConfig(_Strict):
@@ -86,7 +140,7 @@ class AppConfig(_Strict):
     retention: RetentionConfig = RetentionConfig()
     footprint: FootprintConfig = FootprintConfig()
     levels: LevelsConfig = LevelsConfig()
-    costs: CostsConfig = CostsConfig()
+    costs: CostsConfig
     data_quality: DataQualityConfig = DataQualityConfig()
 
     def symbol(self, name: str) -> SymbolConfig:

@@ -10,15 +10,13 @@ Conventions (docs/DECISIONS.md D-016):
   side); on a tie add both pairs. Stop when included >= pct * total.
 - TPO: each 30-min period contributes 1 to every row between its low and high (inclusive).
 - Volume profile: footprint volume per row.
-- HVN/LVN: centered moving average (window hvn_smoothing_rows, edges use the available
-  rows); HVN = strict local maximum of the smoothed profile (plateaus: the middle row) with
-  smoothed >= prominence * max(smoothed); LVN = the minimum row strictly between two
-  adjacent HVNs.
+- HVN/LVN (D-028): centered moving average (window hvn_smoothing_rows, edges use the
+  available rows); HVN/LVN = strict local maxima/minima of the smoothed profile (plateaus:
+  the middle row), ranked by topographic prominence, a minimum distance apart, top N each.
 """
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass
 
 import numpy as np
@@ -143,31 +141,101 @@ def smooth(counts: np.ndarray, window: int) -> np.ndarray:
     return np.asarray((cs[hi] - cs[lo]) / (hi - lo))
 
 
-def hvn_lvn(p: Profile, window: int, prominence: float) -> tuple[list[float], list[float]]:
-    """(HVN prices, LVN prices) at row midpoints."""
-    if p.empty or len(p.counts) < 3:
-        return [], []
-    s = smooth(p.counts, window)
-    thr = prominence * s.max()
-    peaks: list[int] = []
-    i, n = 1, len(s)
+def _plateau_extrema(s: np.ndarray, sign: int) -> list[int]:
+    """Strict local maxima (sign=+1) or minima (sign=-1) of s; plateaus -> middle index.
+
+    Only interior points qualify (both neighbours exist and are strictly lower/higher).
+    """
+    v = sign * s
+    out: list[int] = []
+    i, n = 1, len(v)
     while i < n - 1:
-        if s[i] > s[i - 1]:
+        if v[i] > v[i - 1]:
             j = i
-            while j + 1 < n and s[j + 1] == s[i]:
+            while j + 1 < n and v[j + 1] == v[i]:
                 j += 1  # plateau
-            if j + 1 < n and s[j + 1] < s[i] and s[i] >= thr:
-                peaks.append((i + j) // 2)
+            if j + 1 < n and v[j + 1] < v[i]:
+                out.append((i + j) // 2)
             i = j + 1
         else:
             i += 1
-    lvns = []
-    for a, b in itertools.pairwise(peaks):
-        seg = s[a + 1 : b]
-        if len(seg):
-            lvns.append(a + 1 + int(np.argmin(seg)))
+    return out
+
+
+def prominences(v: np.ndarray, peaks: list[int]) -> np.ndarray:
+    """Topographic prominence of each peak of v (same definition as scipy's peak_prominences).
+
+    From the peak, walk left until a strictly higher point or the array edge, and take the
+    minimum on the way; the same to the right. Prominence = height - max(left min, right min).
+    """
+    out = np.zeros(len(peaks), dtype=np.float64)
+    n = len(v)
+    for k, p in enumerate(peaks):
+        h = v[p]
+        i, left_min = p, h
+        while i > 0 and v[i - 1] <= h:
+            i -= 1
+            left_min = min(left_min, v[i])
+        j, right_min = p, h
+        while j < n - 1 and v[j + 1] <= h:
+            j += 1
+            right_min = min(right_min, v[j])
+        out[k] = h - max(left_min, right_min)
+    return out
+
+
+def _select(
+    idx: list[int], prom: np.ndarray, rows: np.ndarray, floor: float, min_dist_rows: float, n: int
+) -> list[int]:
+    """Greedy top-n by prominence (ties: lower row first), >= min_dist_rows apart."""
+    order = sorted(range(len(idx)), key=lambda k: (-prom[k], idx[k]))
+    chosen: list[int] = []
+    for k in order:
+        if len(chosen) >= n:
+            break
+        if prom[k] <= 0 or prom[k] < floor:
+            continue
+        r = int(rows[idx[k]])
+        if all(abs(r - int(rows[c])) >= min_dist_rows for c in chosen):
+            chosen.append(idx[k])
+    return sorted(chosen)
+
+
+def hvn_lvn(
+    p: Profile,
+    window: int,
+    min_prominence: float,
+    min_distance: float,
+    top_hvn: int,
+    top_lvn: int,
+) -> tuple[list[float], list[float]]:
+    """(HVN prices, LVN prices) at row midpoints, ascending (D-028).
+
+    - The volume profile is smoothed with a centered moving average of `window` rows.
+    - HVN candidates: strict local maxima of the smoothed profile. Prominence is measured with
+      the profile padded by zero volume on both sides (no volume traded beyond the range), so
+      a peak at the profile edge is measured against zero.
+    - LVN candidates: strict interior local minima. Prominence = depth below the lower of the
+      two surrounding highs (prominence of the inverted profile, no padding: the profile
+      edges are not LVNs).
+    - Keep candidates with prominence >= min_prominence * max(smoothed), then the top N by
+      prominence, greedily, skipping a candidate closer than `min_distance` (price units) to
+      an already chosen node of the same kind.
+    """
+    if p.empty or len(p.counts) < 3:
+        return [], []
+    s = smooth(p.counts, window)
+    floor = min_prominence * float(s.max())
+    min_rows = min_distance / p.row_size
+    padded = np.concatenate([[0.0], s, [0.0]])
+    peaks = _plateau_extrema(s, +1)
+    hv = _select(
+        peaks, prominences(padded, [k + 1 for k in peaks]), p.rows, floor, min_rows, top_hvn
+    )
+    troughs = _plateau_extrema(s, -1)
+    lv = _select(troughs, prominences(-s, troughs), p.rows, floor, min_rows, top_lvn)
     rs = p.row_size
     return (
-        [float((p.rows[k] + 0.5) * rs) for k in peaks],
-        [float((p.rows[k] + 0.5) * rs) for k in lvns],
+        [float((p.rows[k] + 0.5) * rs) for k in hv],
+        [float((p.rows[k] + 0.5) * rs) for k in lv],
     )

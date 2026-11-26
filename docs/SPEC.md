@@ -1,7 +1,8 @@
 # FLOWLEVELS — specification
 
 Original spec: 2026-11-25. **Amendments of 2026-11-25** (owner decisions A/B/C and the
-risk responses) are merged into the text below and marked **[A1]**. If anything here
+risk responses) are merged into the text below and marked **[A1]**. **Amendments of
+2026-11-26** (owner decisions A/B/C after the Phase 2 sanity review) are marked **[A2]**. If anything here
 conflicts with older notes, this file wins. Every change to this file goes into
 `docs/DECISIONS.md`.
 
@@ -105,11 +106,22 @@ computed incrementally. No future data is used anywhere.
 - TPO (30-minute periods, row size `tpo_tick`): prior-day POC, VAH and VAL (70% value area),
   developing POC, naked POCs (look-back N days), single prints (optional).
 - Volume profile: prior-day and prior-week POC, VAH and VAL. HVN and LVN come from a
-  smoothed profile using documented peak detection.
+  smoothed profile using documented peak detection. **[A2]** Nodes are ranked by
+  topographic **prominence** (not height), must be at least `hvn_min_distance_k_atr` ×
+  ATR(1h, as of the session open) apart, and only the top `hvn_top_n` HVNs and `lvn_top_n`
+  LVNs per profile are kept (defaults 3 + 3, D-028).
 - VWAP: daily, weekly and monthly anchored, with ±1σ and ±2σ volume-weighted bands.
 - Ranges: PDH/PDL and PWH/PWL.
 - Confluence: levels within k × ATR(1h) are clustered. Each cluster gets a label and a
-  score equal to a weighted count. Zone = cluster price ± tolerance.
+  score equal to a weighted count. Zone = cluster price ± tolerance. **[A2]** Clusters are
+  **anchored** on their strongest member (members within k × ATR of the anchor, so they
+  cannot chain) and a zone is never wider than `zone_max_width_k_atr` × ATR(1h) (default
+  0.5, tolerance included, D-029).
+- **[A2] Data holes:** recorded holes (D-026) are not repaired before Phase 3. Bars that
+  overlap a hole, and sessions whose level inputs overlap one, are excluded from baselines,
+  level quality checks and all research statistics, and every report states how much was
+  excluded (`flowlevels.data.quality`, D-031). Repair is required before the hold-out run
+  (BACKLOG).
 
 ## 7. Orderflow engine
 - The base resolution is 1m. Higher resolutions are built by adding up 1m rows per price
@@ -159,7 +171,10 @@ Trade model (the same for every group):
 - Exits are evaluated separately: 1R, 2R, 3R, next zone, and a time stop. Use the 1m path to
   decide between stop and target. When both fall inside one 1m bar, assume the stop.
 - Costs: taker fee per side (default 0.05%) plus slippage (default 1 bucket). A maker-entry
-  variant is reported as a labelled sensitivity.
+  variant is reported as a labelled sensitivity. **[A2]** Signals are sourced from Binance
+  USD-M but trades are executed on **OKX perpetuals**, so the default fee profile is OKX's
+  standard (non-VIP) futures fees; Binance fees remain an alternative profile
+  (`costs.fee_profile`, D-030). Every result records the fee profile.
 - **[A1] Cost geometry:** report costs in R per group. Report every net result **in R and in
   bps per trade**. Add a **sensitivity run** where treatment uses the baseline (zone-edge)
   stop.

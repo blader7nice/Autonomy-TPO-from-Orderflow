@@ -5,10 +5,11 @@ from __future__ import annotations
 import datetime as dt
 import random
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flowlevels.config import AppConfig
+from flowlevels.config import AppConfig, LevelsConfig
 from flowlevels.data.storage import ParquetStore, utc_date
 from flowlevels.footprint.bars import (
     aggregate_footprint,
@@ -20,6 +21,9 @@ from flowlevels.footprint.bars import (
 )
 from flowlevels.levels.engine import LevelSet, closed_rows, compute_levels, history_start_ms
 from flowlevels.levels.vwap import anchored_vwap
+
+if TYPE_CHECKING:
+    from flowlevels.data.quality import Exclusions
 
 
 def parse_ts(s: str) -> int:
@@ -166,13 +170,25 @@ def sanity_plot(
     return path
 
 
-def pick_days(store: ParquetStore, symbol: str, n: int, seed: int = 42) -> list[dt.date]:
+def pick_days(
+    store: ParquetStore,
+    symbol: str,
+    n: int,
+    seed: int = 42,
+    lc: LevelsConfig | None = None,
+    excl: Exclusions | None = None,
+) -> list[dt.date]:
     """n random complete (archive-built) days that have a full prior day stored.
 
-    Days without a completion marker (e.g. today's partial live day) are never picked.
+    Days without a completion marker (e.g. today's partial live day) are never picked. With
+    `lc`, sessions whose level inputs overlap a data hole are excluded first (D-031) and
+    recorded in `excl`.
     """
-    days = store.days("ohlcv_1m", symbol)
-    done = [d for d in days if store.completion("ohlcv_1m", symbol, d) is not None]
-    eligible = [d for d in done if d - dt.timedelta(days=1) in days]
+    from flowlevels.data.quality import clean_sessions
+    from flowlevels.levels.stats import eligible_days
+
+    eligible = eligible_days(store, symbol)
+    if lc is not None:
+        eligible = clean_sessions(store, symbol, eligible, lc, excl)
     rnd = random.Random(seed)
     return sorted(rnd.sample(eligible, min(n, len(eligible))))

@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **Phase 1/2 VPS acceptance done (2026-11-26). STOP: owner reviews the sanity plots and the HVN/zone issue before Phase 3.**
+Current phase: **Pre-Phase-3 fixes done (2026-11-26): owner decisions A/B/C applied. STOP: owner reviews the v2 sanity plots/statistics and the 3 open observations before Phase 3.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -147,3 +147,51 @@ Current phase: **Phase 1/2 VPS acceptance done (2026-11-26). STOP: owner reviews
 - Open issues: `compute_levels` recomputes everything from frames on every call. Prior-
   session levels are constant within a session and should be cached per (symbol, day)
   before the Phase 3 bar-by-bar backtest; profile this first.
+
+## Pre-Phase-3 fixes (owner decisions A/B/C of 2026-11-26) ✅ (2026-11-26)
+- **A. Data hole kept, excluded (D-031).** The 2026-10-27 00:02:46–00:30:05 hole is not
+  filled. New `flowlevels.data.quality` holds the single exclusion rule: bars that overlap a
+  hole, and sessions whose level inputs ([history_start_ms(open), close)) overlap one. The
+  sanity-plot picker and the new level statistics exclude them and print how much was
+  excluded. In the 30-day window that is **24 of 58 sessions (41.4%)**, 10-28 … 11-08 for both
+  symbols (prior-week profile and October monthly VWAP). Baselines and research do not exist
+  yet; Phase 3 must use this module (SPEC §6 [A2]). Repair stays in BACKLOG, required before
+  the hold-out.
+- **B. HVN/LVN and confluence (config v2).**
+  - HVN/LVN by topographic prominence (≥ 5% of max), ≥ 0.5 × ATR(1h at session open) apart,
+    top 3 + 3 per profile (D-028).
+  - Anchored confluence: each cluster is anchored on its strongest member, members lie
+    within 0.25 ATR of the anchor, and zones have a hard cap of 0.5 ATR width, tolerance
+    included. The tolerance goes from 0.15 to 0.10 ATR so that two levels can still form a
+    zone (D-029).
+  - Regression test on **real** BTC 2026-11-17 data (`tests/test_levels_real.py`, 0.9 MB
+    fixture, `tests/fixtures/README.md`). At 24 hourly snapshots: no zone wider than the cap,
+    ≤ 3 + 3 nodes, nodes constant within the session, 15–45 levels, 3–15 confluence zones per
+    snapshot (measured: 33 and 7.7).
+  - Before/after over the 17 clean sessions per symbol (`docs/sanity/README.md`):
+
+    | | BTC v1 → v2 | ETH v1 → v2 |
+    |---|---|---|
+    | levels/day | 107.8 → 31.2 | 87.4 → 30.4 |
+    | HVN+LVN/day | 82.7 → 6.0 | 62.9 → 5.9 |
+    | confluence zones/snapshot | 4.5 → 8.3 | 5.4 → 7.7 |
+    | … overlapping the day's range | 2.2 → 5.0 | 2.6 → 4.7 |
+    | zone width mean USD / ATR | 860 / 1.41 → 210 / 0.34 | 24.5 / 1.18 → 7.3 / 0.34 |
+    | zone width max USD / ATR | 5,911 / 8.69 → 531 / 0.50 | 197 / 7.24 → 19.7 / 0.50 |
+  - Sanity plots regenerated (2026-11-09, 11-12, 11-17, 11-20). The v1 plots are kept in
+    `docs/sanity/v1/`. New `make levels-stats`.
+- **C. Execution on OKX (D-030).** `costs` now holds named fee profiles. The default is
+  `okx_regular`: maker 0.02%, taker 0.05%, VERIFIED from OKX's official notices (published
+  2026-03-24, effective 2026-04-08; regular tier unchanged by the 2026-09-09 change). The
+  alternative is `binance_regular` (same rates, UNVERIFIED). The live `okx.com/fees` table
+  is JavaScript-only and was not read directly. **From the German VPS, OKX serves the EEA
+  site, which has no futures tab**: check perpetual access and fees for the owner's actual
+  account (DATA_SOURCES "OKX fees"). OKX as a second flow source (A/B test) and funding
+  costs were added to BACKLOG.
+- Tests: 105 passed (was 97), `make check` green.
+- Open for the owner (docs/sanity/README.md "Open observations"):
+  1. Neighbouring zones can touch or overlap. Phase 3 needs a rule that assigns each touch to
+     exactly one zone (proposal: nearest anchor).
+  2. Zone ids change when a developing member (VWAP d, dPOC) moves. Touch counting needs a
+     stable zone identity.
+  3. The strict hole rule excludes 41% of the current 30-day window.

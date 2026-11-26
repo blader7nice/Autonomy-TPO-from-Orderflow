@@ -34,7 +34,8 @@ in this order, from the repository root, after `cp .env.example .env` and editin
 | 3 | `make validate-klines` | Compares 1m OHLCV rebuilt from aggTrades with Binance 1m klines for the bootstrapped days | 1 |
 | 4 | `make live-smoke` | Runs the live collector for 1 hour (default), with gap backfill, and writes a gap/reconnect report | 1 |
 | 5 | `make levels TS=2026-11-20T14:00` | Prints levels, zones and the footprint of the bar at a timestamp | 2 |
-| 6 | `make sanity-plots` | Writes PNGs of 3 random days with levels and VWAP bands to `docs/sanity/` | 2 |
+| 6 | `make sanity-plots` | Writes PNGs of 3 random clean days (plus 2026-11-17) with levels and VWAP bands to `docs/sanity/` | 2 |
+| 7 | `make levels-stats` | Levels/zones per day and zone widths over all clean sessions, to `docs/sanity/levels-stats-<date>.md` | 2 |
 | 7 | `make backtest` | 60-day tuning run (small grid) | 3 |
 | 8 | `make holdout` | **Single** hold-out run on the 9 months before the tuning window, frozen thresholds | 3b |
 

@@ -39,6 +39,7 @@ class Zone:
     low: float
     high: float
     members: tuple[Level, ...]
+    anchor: str = ""  # name of the anchoring (strongest) member
 
 
 @dataclass(frozen=True)
@@ -93,8 +94,10 @@ def _profile_levels(
     lc: LevelsConfig,
     suffix: str,
     tpo: bool,
-    nodes: bool,
+    node_atr: float | None,
 ) -> list[Level]:
+    """Profile levels of one session. HVN/LVN only when node_atr is given (the minimum node
+    distance is node_atr * hvn_min_distance_k_atr)."""
     out: list[Level] = []
     if tpo:
         va = value_area(
@@ -113,8 +116,15 @@ def _profile_levels(
             Level(f"{n} {suffix}", f"{n} {suffix}", p)
             for n, p in (("vPOC", vva.poc), ("vVAH", vva.vah), ("vVAL", vva.val))
         ]
-    if nodes:
-        hv, lv = hvn_lvn(vp, lc.hvn_smoothing_rows, lc.hvn_prominence)
+    if node_atr is not None:
+        hv, lv = hvn_lvn(
+            vp,
+            lc.hvn_smoothing_rows,
+            lc.hvn_min_prominence,
+            lc.hvn_min_distance_k_atr * node_atr,
+            lc.hvn_top_n,
+            lc.lvn_top_n,
+        )
         out += [Level(f"HVN {suffix}", f"HVN {suffix}", p) for p in hv]
         out += [Level(f"LVN {suffix}", f"LVN {suffix}", p) for p in lv]
     return out
@@ -134,9 +144,11 @@ def compute_levels(
     week0 = anchor_ms("w", t_ms)
     levels: list[Level] = []
 
-    # Prior day: TPO + VP + nodes + range.
+    # Prior day: TPO + VP + nodes + range. Node spacing uses ATR(1h) as of the session open,
+    # so prior-day nodes are constant within the session (no nodes without that ATR).
     pd_oh, pd_fp = _between(oh, day0 - DAY_MS, day0), _between(fp, day0 - DAY_MS, day0)
-    levels += _profile_levels(pd_oh, pd_fp, sc, lc, "d", tpo=True, nodes=True)
+    node_atr = atr_1h(oh, day0, lc.atr_period_1h)
+    levels += _profile_levels(pd_oh, pd_fp, sc, lc, "d", tpo=True, node_atr=node_atr)
     if pd_oh.height:
         levels += [
             Level("PDH", "PDH", _f(pd_oh["high"].max())),
@@ -145,7 +157,7 @@ def compute_levels(
 
     # Prior week: VP + range.
     pw_oh, pw_fp = _between(oh, week0 - 7 * DAY_MS, week0), _between(fp, week0 - 7 * DAY_MS, week0)
-    levels += _profile_levels(pw_oh, pw_fp, sc, lc, "w", tpo=False, nodes=False)
+    levels += _profile_levels(pw_oh, pw_fp, sc, lc, "w", tpo=False, node_atr=None)
     if pw_oh.height:
         levels += [
             Level("PWH", "PWH", _f(pw_oh["high"].max())),
@@ -192,20 +204,47 @@ def compute_levels(
 def confluence(
     symbol: str, levels: list[Level], atr: float, sc: SymbolConfig, lc: LevelsConfig
 ) -> list[Zone]:
-    """Single-linkage clusters of levels with neighbour distance <= k * ATR(1h)."""
+    """Anchored clustering with a hard width cap (D-029). It cannot chain.
+
+    Repeat until every level is assigned:
+    1. Anchor = the strongest unassigned level: highest weight; ties -> highest summed weight
+       of unassigned levels within confluence_k_atr * ATR (densest spot); then lower price,
+       then name.
+    2. Candidates = unassigned levels within confluence_k_atr * ATR of the anchor, taken
+       closest-first (ties: higher weight, lower price, name). A candidate joins only if the
+       member span stays <= zone_max_width_k_atr * ATR - 2 * tolerance.
+    Zone edges = [min member - tol, max member + tol], so width <= zone_max_width_k_atr * ATR.
+    Every member is within the radius of the anchor, so there is no chaining.
+    Zones are returned sorted by price.
+    """
     if not levels:
         return []
-    gap = lc.confluence_k_atr * atr
+    radius = lc.confluence_k_atr * atr
     tol = lc.zone_tolerance_k_atr * atr
-    srt = sorted(levels, key=lambda lv: (lv.price, lv.name))
-    clusters: list[list[Level]] = [[srt[0]]]
-    for lv in srt[1:]:
-        if lv.price - clusters[-1][-1].price <= gap:
-            clusters[-1].append(lv)
-        else:
-            clusters.append([lv])
+    max_span = lc.zone_max_width_k_atr * atr - 2 * tol
+    eps = 1e-9 * max(atr, 1.0)
+    pool = sorted(levels, key=lambda lv: (lv.price, lv.name))
     zones = []
-    for c in clusters:
+    while pool:
+        dens = {
+            id(a): sum(lc.weight(x.type) for x in pool if abs(x.price - a.price) <= radius + eps)
+            for a in pool
+        }
+        anchor = min(pool, key=lambda a: (-lc.weight(a.type), -dens[id(a)], a.price, a.name))
+        cands = sorted(
+            (x for x in pool if x is not anchor and abs(x.price - anchor.price) <= radius + eps),
+            key=lambda x: (abs(x.price - anchor.price), -lc.weight(x.type), x.price, x.name),
+        )
+        members = [anchor]
+        lo = hi = anchor.price
+        for x in cands:
+            nlo, nhi = min(lo, x.price), max(hi, x.price)
+            if nhi - nlo <= max_span + eps:
+                members.append(x)
+                lo, hi = nlo, nhi
+        taken = {id(m) for m in members}
+        pool = [x for x in pool if id(x) not in taken]
+        c = sorted(members, key=lambda lv: (lv.price, lv.name))
         w = np.array([lc.weight(lv.type) for lv in c])
         p = np.array([lv.price for lv in c])
         price = float((w * p).sum() / w.sum()) if w.sum() > 0 else float(p.mean())
@@ -220,9 +259,10 @@ def confluence(
                 low=float(p.min()) - tol,
                 high=float(p.max()) + tol,
                 members=tuple(c),
+                anchor=anchor.name,
             )
         )
-    return zones
+    return sorted(zones, key=lambda z: (z.price, z.label))
 
 
 def history_start_ms(t_ms: int, lc: LevelsConfig) -> int:

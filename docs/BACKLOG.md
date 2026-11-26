@@ -16,4 +16,15 @@
   aggTrade-like events for the hole only (new id namespace, flagged), or (b) build all history
   from raw trades (exact per-fill timestamps, removes the minute-boundary residual; ~1.7× the
   download size; live would still be aggTrade, so live/hist parity has to be re-argued).
-  Needs an owner decision.
+  **Owner decision 2026-11-26: not now; do it before the 9-month hold-out run.** Until then,
+  affected bars/sessions are excluded (D-031). Before the hold-out, also scan the 9 months
+  for further holes (`make bootstrap` records them).
+- Finer hole exclusion: exclude only the levels whose inputs overlap a hole (for example
+  only the prior-week profile and the monthly VWAP) instead of the whole session (D-031
+  costs 41% of sessions in the 30-day window). Only worth it if the hole is not repaired.
+- **OKX as a second flow source, A/B test against Binance-only** (owner, 2026-11-26; after
+  Phase 3). Trades are executed on OKX (D-030). Test whether OKX aggTrades/footprint, alone
+  or merged with Binance, improve confirmation, using the same paired design. This needs an
+  OKX VenueAdapter, a verify-api for OKX, history from OKX's archive (check availability and
+  depth), and a decision on how to merge two venues' aggressor flow.
+- Funding cost in the trade model (OKX funding for holds across a funding timestamp).

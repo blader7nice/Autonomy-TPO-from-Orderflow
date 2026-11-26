@@ -90,7 +90,7 @@ Sources used:
 | aggTrade `T` is the time of the **first** fill; the other fills in `[f, l]` are 0–100 ms later | VERIFIED 2026-11-26: every raw fill of BTCUSDT 2026-11-24 (5,901,953) and ETHUSDT 2026-11-16/17, mapped to its aggTrade via `[f, l]`, has fill time − T in [0, 100] ms |
 | `l − f + 1` is **not** the number of market fills. `[f, l]` ranges contain trade ids that are not in the raw `trades` archive and not in the kline `count` (consistent with "insurance fund and ADL trades are not aggregated"). Σ(l−f+1) exceeds the kline count by 75–4,143 per day. | VERIFIED 2026-11-26. `fill_count` (D-011) is informational only and is not part of the kline mismatch criterion. |
 | The raw `trades` archive (`data/futures/um/daily/trades/{S}/{S}-trades-{D}.zip`, columns `id,price,qty,quote_qty,time,is_buyer_maker`, with header) row count equals the kline `count` exactly | VERIFIED 2026-11-26 (BTCUSDT 2026-10-27: 2,540,264 = 2,540,264) |
-| **The aggTrades archive can have time holes with contiguous aggTrade ids.** On 2026-10-27, 00:02:46 → 00:30:05 UTC, there are no aggTrades for BTCUSDT and ETHUSDT. Klines and the raw `trades` archive have normal trading there (BTC: 38,355 fills; missing volume below). The daily and the monthly (regenerated 2026-11-11) aggTrades archives are identical: same rows, same id range. Id-gap detection cannot see this. | VERIFIED 2026-11-26. Detected now by `data_quality.max_trade_silence_s` (D-026). Not repaired (owner decision pending). |
+| **The aggTrades archive can have time holes with contiguous aggTrade ids.** On 2026-10-27, 00:02:46 → 00:30:05 UTC, there are no aggTrades for BTCUSDT and ETHUSDT. Klines and the raw `trades` archive have normal trading there (BTC: 38,355 fills; missing volume below). The daily and the monthly (regenerated 2026-11-11) aggTrades archives are identical: same rows, same id range. Id-gap detection cannot see this. | VERIFIED 2026-11-26. Detected now by `data_quality.max_trade_silence_s` (D-026). Not repaired: owner decision 2026-11-26 is to keep it flagged and exclude affected bars/sessions (D-031); repair from the raw `trades` archive before the hold-out (BACKLOG). |
 
 Missing volume in the hole: BTC 17.344, ETH 1014.017 (kline volume of the 27 hole minutes plus
 the two partial edge minutes).
@@ -133,3 +133,42 @@ Checks (all PASS on 2026-11-26):
 `!forceOrder@arr` so a sample arrives within 60 s), `rest_aggTrades` (keys, `fromId`
 inclusive, contiguity, weight header), `rest_limits` (limit 1001 rejected, −4166 beyond 48 h,
 2400/min), `ws_vs_rest`. It uses about 7 REST requests (~140 weight).
+
+## Execution venue fees (cost model, D-030)
+
+The signals come from Binance USD-M. The owner executes on **OKX perpetual swaps**, so the
+default cost model uses OKX fees (`configs/default.yaml` → `costs.fee_profiles`).
+
+### OKX fees — VERIFIED 2026-11-26
+
+| Item | Value |
+|---|---|
+| Tier | Regular user (non-VIP), futures fee schedule (perpetual and expiry futures) |
+| Maker | **0.0200%** (0.0002) |
+| Taker | **0.0500%** (0.0005) |
+| Primary source | OKX official notice "Advance Notice: Adjustments to VIP Tier Thresholds and Futures Fee Rates", published 2026-03-24, effective 2026-04-08 (`https://www.okx.com/en-ae/help/advance-notice-adjustment-to-vip-tier-and-future-fees`). Its futures table has a "Regular user" row: before and after are both maker 0.0200% / taker 0.0500%, for Group 1 ("Top 10 pairs") and Group 2 ("All other pairs"); thresholds are in USD. |
+| Still current | OKX notice "Advance Notice: Spot and Futures Trading Fee Adjustment", published 2026-08-24, effective 2026-09-09 (`https://www.okx.com/en-us/help/advance-notice-spot-and-futures-trading-fee-adjustment-090926`). It changes only VIP 7 and VIP 8 and lists the regular tier at 0.0200% / 0.0500%. That page is the OKX Singapore version (SGD thresholds). |
+| Retrieved | 2026-11-26, from the VPS |
+
+Caveats:
+- **The fee page itself (`okx.com/fees`) could not be read as text.** Its table loads with
+  JavaScript, and the server-rendered state only contains the Spot tab. Calling the page's
+  internal (undocumented) fee-table endpoint directly was not done. The numbers above come
+  from OKX's official notices, not from the live fee table. Recheck on `okx.com/fees`
+  (Futures tab) when logged in. OKX says the logged-out table is not tied to any account,
+  and the logged-in "My trading fees" shows your actual rate.
+- The notices do not say whether USDT-margined, USDC-margined and coin-margined swaps
+  differ for the regular tier. Some third-party summaries list USDC-settled maker 0.018%.
+  For USDT-margined BTC/ETH swaps we use the futures schedule above.
+- **Region:** from the VPS (geolocated in Germany) `okx.com/fees` redirects to the EEA site
+  (`/en-eu/fees`), which has **no Futures tab** (Spot, Options, Spreads, Events only). The
+  UK site (`/en-gb`) has none either. The global sites (`/en-ae`, `/en-sg`) do have one. If
+  the trading account is an OKX EEA account, check that perpetual swaps are available to it
+  and at which fees.
+- Funding payments are not part of the fee profile (BACKLOG/Phase 3 cost model).
+
+### Binance USD-M fees — UNVERIFIED
+
+`binance_regular`: maker 0.0200%, taker 0.0500% (VIP 0, no BNB discount). This is prior
+knowledge, not checked against Binance's fee page in this session. It is kept only as the
+alternative profile.

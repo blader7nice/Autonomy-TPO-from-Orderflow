@@ -8,9 +8,10 @@ DURATION ?= 3600
 TS ?=
 SYMBOL ?= BTCUSDT
 RES ?= 5m
+TODAY := $(shell date -u +%Y-%m-%d)
 
 .PHONY: help sync lint format typecheck test check verify-api bootstrap validate-klines \
-        live-smoke levels footprint sanity-plots
+        live-smoke levels footprint sanity-plots levels-stats
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -54,4 +55,7 @@ footprint:
 	$(RUN) flowlevels footprint --symbol $(SYMBOL) --ts $(TS) --res $(RES)
 
 sanity-plots:
-	$(RUN) flowlevels sanity-plots --symbols $(SYMBOLS) --n-days 3
+	$(RUN) flowlevels sanity-plots --symbols $(SYMBOLS) --n-days 3 --day 2026-11-17
+
+levels-stats:
+	$(RUN) flowlevels levels-stats --symbols $(SYMBOLS) --out docs/sanity/levels-stats-$(TODAY).md

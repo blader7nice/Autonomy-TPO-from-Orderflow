@@ -71,9 +71,42 @@ def test_tpo_profile_counts_periods() -> None:
 
 def test_hvn_lvn_bimodal() -> None:
     counts = [1, 2, 8, 9, 8, 2, 1, 1, 2, 7, 10, 7, 2, 1]
-    hv, lv = hvn_lvn(_prof(counts), window=1, prominence=0.1)
+    hv, lv = hvn_lvn(_prof(counts), 1, 0.1, 0.0, 3, 3)
     assert hv == [1035.0, 1105.0]
-    assert lv == [1065.0]  # first minimum between the peaks (rows 106, 107 tie -> 106)
+    assert lv == [1065.0]  # rows 106/107 tie: a plateau valley -> its middle (lower) row
+    counts[6] = 1.5  # now row 107 is the strict minimum
+    assert hvn_lvn(_prof(counts), 1, 0.1, 0.0, 3, 3)[1] == [1075.0]
+
+
+def test_prominences_match_scipy_definition() -> None:
+    from flowlevels.levels.profile import prominences
+
+    v = np.array([0, 5, 1, 3, 2, 8, 0], float)
+    # peak 1 (5): left min 0 (edge), right min until 8 -> 1; ref max(0,1)=1 -> 4
+    # peak 3 (3): left until 5 -> min 1, right until 8 -> min 2; ref 2 -> 1
+    # peak 5 (8): highest; left min 0, right min 0 -> 8
+    assert prominences(v, [1, 3, 5]).tolist() == [4.0, 1.0, 8.0]
+
+
+def test_hvn_uses_prominence_not_height() -> None:
+    # A tall but shallow wiggle on a big peak (rows 103/105 around 104) is not an HVN;
+    # a small but isolated peak (row 110) is.
+    counts = [0, 2, 20, 100, 98, 99, 60, 10, 1, 1, 15, 1, 0]
+    hv, lv = hvn_lvn(_prof(counts), 1, 0.05, 0.0, 3, 3)
+    # peaks: row 103 (100, prom 100), 105 (99, prom 1 -> < 5 floor), 110 (15, prom 14)
+    assert hv == [1035.0, 1105.0]
+    # valleys: 104 (98, depth 1 < floor), 108/109 plateau -> 108 (depth 9)
+    assert lv == [1085.0]
+
+
+def test_hvn_min_distance_and_top_n() -> None:
+    # Three well separated peaks; prominences 50 > 30 > 20.
+    counts = [0, 50, 0, 0, 30, 0, 0, 0, 0, 20, 0]
+    p = _prof(counts)
+    assert hvn_lvn(p, 1, 0.0, 0.0, 3, 0)[0] == [1015.0, 1045.0, 1095.0]
+    assert hvn_lvn(p, 1, 0.0, 0.0, 2, 0)[0] == [1015.0, 1045.0]  # top 2 by prominence
+    # min distance 40 USD = 4 rows: row 104 is 3 rows from 101 -> skipped, 109 kept.
+    assert hvn_lvn(p, 1, 0.0, 40.0, 3, 0)[0] == [1015.0, 1095.0]
 
 
 # ------------------------------------------------------------------ VWAP
@@ -102,22 +135,55 @@ def test_anchors() -> None:
 
 
 # ------------------------------------------------------------------ confluence
-def test_confluence_clusters_and_scores() -> None:
-    lc = LevelsConfig(confluence_k_atr=0.5, zone_tolerance_k_atr=0.1, weights={"nPOC": 2.0})
-    sc = SymbolConfig(exchange_tick=0.1, bucket=10, tpo_tick=10)
+SC_T = SymbolConfig(exchange_tick=0.1, bucket=10, tpo_tick=10)
+
+
+def test_confluence_anchored_on_strongest_and_scores() -> None:
+    lc = LevelsConfig(
+        confluence_k_atr=0.5,
+        zone_tolerance_k_atr=0.1,
+        zone_max_width_k_atr=1.2,
+        weights={"nPOC": 2.0},
+    )
     lv = [
         Level("VAL d", "VAL d", 100.0),
         Level("nPOC x", "nPOC", 104.0),
         Level("PDH", "PDH", 120.0),
         Level("VWAP d", "VWAP d", 108.0),
     ]
-    zones = confluence("BTCUSDT", lv, atr=10.0, sc=sc, lc=lc)
-    # gap 5: 100,104,108 chain; 120 separate
+    zones = confluence("BTCUSDT", lv, atr=10.0, sc=SC_T, lc=lc)
+    # anchor nPOC (weight 2), radius 5: 100 and 108 join (span 8 <= 12 - 2); 120 alone
     assert [z.label for z in zones] == ["VAL d | nPOC x | VWAP d", "PDH"]
     z = zones[0]
+    assert z.anchor == "nPOC x"
     assert z.score == 4.0
     assert z.price == pytest.approx((100 + 2 * 104 + 108) / 4)
     assert (z.low, z.high) == (99.0, 109.0)
+
+
+def test_confluence_cannot_chain() -> None:
+    # Evenly spaced levels 4 apart: single-linkage with gap 5 would chain all ten into one
+    # zone. Anchored clustering keeps every zone within the width cap.
+    lc = LevelsConfig(confluence_k_atr=0.5, zone_tolerance_k_atr=0.1, zone_max_width_k_atr=1.0)
+    lv = [Level(f"L{i}", "X", 100.0 + 4 * i) for i in range(10)]
+    zones = confluence("BTCUSDT", lv, atr=10.0, sc=SC_T, lc=lc)
+    assert len(zones) > 1
+    assert sum(len(z.members) for z in zones) == 10
+    for z in zones:
+        assert z.high - z.low <= 10.0 + 1e-9
+        anchor = next(m for m in z.members if m.name == z.anchor)
+        assert all(abs(m.price - anchor.price) <= 5.0 for m in z.members)
+
+
+def test_confluence_width_cap_rejects_far_candidate() -> None:
+    # Anchor = densest point (104 has 3 neighbours within 5). Span cap = 10*0.5 - 2*1 = 3,
+    # so of 101/104/106/109 only 104 + 106 fit around the anchor (closest first).
+    lc = LevelsConfig(confluence_k_atr=0.5, zone_tolerance_k_atr=0.1, zone_max_width_k_atr=0.5)
+    lv = [Level(n, "X", p) for n, p in (("a", 101.0), ("b", 104.0), ("c", 106.0), ("d", 109.0))]
+    zones = confluence("BTCUSDT", lv, atr=10.0, sc=SC_T, lc=lc)
+    by = {z.anchor: [m.name for m in z.members] for z in zones}
+    assert by["b"] == ["b", "c"]
+    assert max(z.high - z.low for z in zones) <= 5.0 + 1e-9
 
 
 # ------------------------------------------------------------------ engine + no lookahead

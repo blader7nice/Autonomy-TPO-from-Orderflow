@@ -69,3 +69,16 @@ def test_sanity_plot_with_hole(store: ParquetStore, tmp_path: Path) -> None:
     day0 = store.days("ohlcv_1m", "BTCUSDT")[0]
     p = sanity_plot(store, CFG, "BTCUSDT", day0, tmp_path)
     assert p.exists() and p.stat().st_size > 10_000
+
+
+def test_pick_days_excludes_sessions_whose_level_inputs_touch_a_hole(
+    store: ParquetStore,
+) -> None:
+    from flowlevels.data.quality import Exclusions
+
+    excl = Exclusions(holes=[])
+    # The hole is on day 0 (2026-01-01); days 1-3 all read the monthly VWAP from 01-01.
+    assert pick_days(store, "BTCUSDT", 10, lc=CFG.levels, excl=excl) == []
+    assert excl.sessions_total == 3 and len(excl.excluded) == 3
+    s = excl.summary()
+    assert "3 of 3 (100.0%)" in s and "30.0 min" in s

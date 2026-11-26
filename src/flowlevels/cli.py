@@ -192,14 +192,36 @@ def _cmd_footprint(args: argparse.Namespace) -> int:
 def _cmd_sanity_plots(args: argparse.Namespace) -> int:
     from pathlib import Path
 
+    from flowlevels.data.quality import Exclusions
     from flowlevels.data.storage import ParquetStore
     from flowlevels.levels.report import pick_days, sanity_plot
 
     settings, cfg = _setup()
     store = ParquetStore(settings.data_dir)
+    excl = Exclusions(holes=[])
+    extra = [dt.date.fromisoformat(d) for d in args.day]
     for sym in args.symbols:
-        for day in pick_days(store, sym, args.n_days, args.seed):
+        days = pick_days(store, sym, args.n_days, args.seed, cfg.levels, excl)
+        for day in sorted(set(days) | set(extra)):
             print(sanity_plot(store, cfg, sym, day, Path(args.out)))
+    print(excl.summary())
+    return 0
+
+
+def _cmd_levels_stats(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.levels.stats import collect, render
+
+    settings, cfg = _setup()
+    stats, excl = collect(ParquetStore(settings.data_dir), cfg, args.symbols)
+    text = render(stats, excl, cfg, args.title)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text)
+        print(f"Report: {args.out}")
+    print(text)
     return 0
 
 
@@ -242,6 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-days", type=int, default=3)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", default="docs/sanity")
+    p.add_argument("--day", action="append", default=[], help="Also plot this day (repeat)")
+    p = add("levels-stats", _cmd_levels_stats, "Levels/zones per day and zone widths (report)")
+    p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p.add_argument("--out", default="")
+    p.add_argument("--title", default="Level statistics")
     return parser
 
 
