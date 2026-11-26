@@ -24,7 +24,7 @@ from flowlevels.venues.base import DataNotAvailableError, VenueAdapter
 
 log = logging.getLogger(__name__)
 
-FOOTPRINT_FORMAT_VERSION = 1
+FOOTPRINT_FORMAT_VERSION = 2  # 2: completion info records time holes (D-026)
 
 
 @dataclass
@@ -36,6 +36,7 @@ class DayReport:
     first_id: int | None = None
     last_id: int | None = None
     gaps: list[dict[str, Any]] = field(default_factory=list)
+    holes: list[dict[str, Any]] = field(default_factory=list)  # time silences (D-026)
     raw_bytes: int = 0
     out_bytes: int = 0
     seconds: float = 0.0
@@ -54,7 +55,31 @@ def fingerprint(cfg: AppConfig, symbol: str) -> dict[str, Any]:
         "format": FOOTPRINT_FORMAT_VERSION,
         "exchange_tick": sc.exchange_tick,
         "bucket": sc.bucket,
+        "max_trade_silence_s": cfg.data_quality.max_trade_silence_s,
     }
+
+
+def find_time_holes(
+    trades: pl.DataFrame, start_ms: int, end_ms: int, max_silence_s: float
+) -> list[dict[str, Any]]:
+    """Stretches inside [start_ms, end_ms) with no trade for longer than max_silence_s.
+
+    Id-gap detection cannot see a hole when the venue never issued ids for the missing
+    period (D-026), so the time axis is checked too. The day edges count as boundaries.
+    """
+    limit = int(max_silence_s * 1000)
+    pts = pl.concat(
+        [
+            pl.Series([start_ms - 1], dtype=pl.Int64),
+            trades["ts_ms"].cast(pl.Int64),
+            pl.Series([end_ms], dtype=pl.Int64),
+        ]
+    )
+    out: list[dict[str, Any]] = []
+    for i in (pts.diff() > limit).arg_true().to_list():
+        a, b = int(pts[i - 1]), int(pts[i])
+        out.append({"after_ms": a, "before_ms": b, "seconds": round((b - a) / 1000, 3)})
+    return out
 
 
 async def process_day(
@@ -75,6 +100,7 @@ async def process_day(
         rep.n_trades = int(done.get("n_trades", 0))
         rep.first_id, rep.last_id = done.get("first_id"), done.get("last_id")
         rep.gaps = list(done.get("gaps", []))
+        rep.holes = list(done.get("holes", []))
         return rep
     try:
         path = await adapter.download_trades_day(symbol, day, raw_dir)
@@ -95,6 +121,9 @@ async def process_day(
     p1 = store.write_part("footprint_1m", symbol, day, "hist", fp_df)
     p2 = store.write_part("ohlcv_1m", symbol, day, "hist", ohlcv_df)
     gaps = [g.to_dict() for g in ing.trackers[symbol].gaps]
+    holes = find_time_holes(trades, start, start + 86_400_000, cfg.data_quality.max_trade_silence_s)
+    if holes:
+        log.warning("%s %s: %d time hole(s) without trades: %s", symbol, day, len(holes), holes)
     rep = DayReport(
         symbol=symbol,
         day=day.isoformat(),
@@ -103,6 +132,7 @@ async def process_day(
         first_id=int(trades["trade_id"][0]) if trades.height else None,
         last_id=int(trades["trade_id"][-1]) if trades.height else None,
         gaps=gaps,
+        holes=holes,
         raw_bytes=raw_bytes,
         out_bytes=p1.stat().st_size + p2.stat().st_size,
     )
@@ -113,6 +143,7 @@ async def process_day(
         "first_id": rep.first_id,
         "last_id": rep.last_id,
         "gaps": gaps,
+        "holes": holes,
         "minutes": ohlcv_df.height,
     }
     store.mark_complete("footprint_1m", symbol, day, info)

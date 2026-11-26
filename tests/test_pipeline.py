@@ -201,3 +201,61 @@ def test_compare_klines_classifies_boundary_shift_vs_unexplained() -> None:
     res_u = compare_klines(ohlcv, kl_u)
     assert res_u["minutes_mismatched_unexplained"] == 1
     assert res_u["unexplained_minute_ts"] == [int(kl["open_time"][10])]
+
+
+def test_find_time_holes_detects_silence_with_contiguous_ids() -> None:
+    from flowlevels.data.pipeline import find_time_holes
+
+    start = 1_793_059_200_000  # 2026-10-27 00:00 UTC
+    ts = [start + 5_000, start + 160_000, start + 1_805_000, start + 86_399_000]
+    trades = pl.DataFrame(
+        {"ts_ms": ts, "trade_id": [1, 2, 3, 4]}  # ids contiguous across the hole
+    )
+    holes = find_time_holes(trades, start, start + 86_400_000, 60.0)
+    assert [(h["after_ms"], h["before_ms"]) for h in holes] == [
+        (start + 5_000, start + 160_000),
+        (start + 160_000, start + 1_805_000),
+        (start + 1_805_000, start + 86_399_000),
+    ]
+    # Day edges count as boundaries: a silent start of the day is a hole.
+    late = pl.DataFrame({"ts_ms": [start + 120_000], "trade_id": [1]})
+    assert find_time_holes(late, start, start + 180_000, 60.0)[0]["after_ms"] == start - 1
+    assert find_time_holes(trades.head(0), start, start + 30_000, 60.0) == []
+
+
+def test_compare_klines_day_edge_and_hole_edge_categories() -> None:
+    from flowlevels.footprint.minute import ohlcv_from_trades
+
+    trades = _day_trades(DAY, 20_000, 1, 8)
+    ohlcv = ohlcv_from_trades(trades)
+    kl = parse_klines_csv(klines_csv_from_trades(trades))
+    last = kl.height - 1
+    i = pl.int_range(pl.len())
+    # Day edge: the last minute of the day has extra volume (its counterpart is in the
+    # next day's file).
+    kl_e = kl.with_columns(pl.when(i == last).then(pl.col("volume") - 0.001).otherwise("volume"))
+    res = compare_klines(ohlcv, kl_e)
+    assert res["minutes_mismatched_day_edge"] == 1 and res["minutes_mismatched_unexplained"] == 0
+    # Hole edge: minute 50 is missing from aggTrades and minute 51 is partial.
+    t50 = int(kl["open_time"][50])
+    o_h = ohlcv.filter(pl.col("minute_ts") != t50)
+    kl_h = kl.with_columns(pl.when(i == 51).then(pl.col("volume") + 0.001).otherwise("volume"))
+    res_h = compare_klines(o_h, kl_h)
+    assert res_h["minutes_only_klines"] == 1 and res_h["kline_only_minute_ts"] == [t50]
+    assert res_h["minutes_mismatched_hole_edge"] == 1
+    assert res_h["minutes_mismatched_unexplained"] == 0
+
+
+def test_compare_klines_chained_straddle_with_clean_middle_minute_is_boundary() -> None:
+    from flowlevels.footprint.minute import ohlcv_from_trades
+
+    trades = _day_trades(DAY, 20_000, 1, 8)
+    ohlcv = ohlcv_from_trades(trades)
+    kl = parse_klines_csv(klines_csv_from_trades(trades))
+    i = pl.int_range(pl.len())
+    # 0.001 moves 20 -> 21 and another 0.001 moves 21 -> 22: minute 21 still matches.
+    shift = pl.when(i == 20).then(-0.001).when(i == 22).then(0.001).otherwise(0.0)
+    kl_c = kl.with_columns(pl.col("volume") + shift)
+    res = compare_klines(ohlcv, kl_c)
+    assert res["minutes_mismatched"] == 2
+    assert res["minutes_mismatched_boundary"] == 2 and res["minutes_mismatched_unexplained"] == 0

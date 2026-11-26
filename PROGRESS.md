@@ -64,6 +64,28 @@ Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the V
   133acd2 plus the uncommitted timing-split change of this commit (hence `-dirty` in the report).
   - Also: `LiveSource` now drains the socket in a reader task during long backfills (D-025),
     and kline validation classifies boundary-straddle residuals (D-023).
+- **Step 3: `make validate-klines` ✅ (2026-11-26).** 86,346 minutes compared (2 symbols × 30
+  days). The 1e-6 mismatch rate is **14.28%** of minutes (BTC 13.6%, ETH 15.0%), and **all of it is
+  explained**:
+  - 12,247 minutes: aggTrades that straddle a minute boundary. `T` is the first fill's time and
+    the other fills come 0–100 ms later; klines bucket each fill. The mismatches net to zero
+    across adjacent minutes, chains included (D-023).
+  - 43 minutes: the same at a UTC day edge (00:00/23:59). Daily volumes pair up exactly with
+    the neighbouring day.
+  - 5 minutes: the partial edges of the data hole below.
+  - 33 ETH minutes in two dense chains, which the classifier cannot net automatically. They
+    were verified fill by fill against the raw `trades` archive: bucketing the fills by their own
+    time reproduces the klines exactly.
+  - 30-day volume and taker-buy volume equal the klines **exactly** except on 2026-10-27.
+    Fill count (Σ l−f+1) is not comparable to kline `count` (ranges include non-market ids).
+  - **Surprise, a data hole:** the aggTrades archive (daily *and* monthly) has **no trades on
+    2026-10-27 00:02:46–00:30:05 UTC** for BTC and ETH (54 kline-only minutes; −17.3 BTC,
+    −1014 ETH). The aggTrade ids are contiguous across it, so id-gap detection was blind. It is
+    now detected as a time hole (`data_quality.max_trade_silence_s`, D-026) and listed in the
+    bootstrap report. It is not repaired; the raw `trades` archive is complete there (BACKLOG,
+    owner decision).
+  - The bootstrap was re-run to record holes (footprint format v2): 5 min 05 s, same results.
+  - Reports: `docs/acceptance/klines-2026-11-26.md`, `docs/acceptance/bootstrap-2026-11-26.md`.
 - **Pending on the VPS (acceptance):**
   `make verify-api` → `make bootstrap` → `make validate-klines` → `make live-smoke`.
   Record the results here: per-day timing, disk use, gap report, kline residuals, the

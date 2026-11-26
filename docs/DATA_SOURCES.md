@@ -81,7 +81,19 @@ Sources used:
 | Fact | Status |
 |---|---|
 | `m` = "Is the buyer the market maker?" (WS), "Was the buyer the maker?" (REST); `is_buyer_maker` in CSV. `m=true` means the **aggressor is the SELLER**. | VERIFIED 2026-11-26 (official SDK field descriptions) **and empirically**: on BTCUSDT 2026-11-24 the buyer-aggressor volume under this mapping equals the kline `taker_buy_volume` exactly for the day (117946.8 = 117946.8). The per-minute match rate is 90.8% as mapped and 0.0% flipped. |
-| Per-minute residual vs klines | Explained 2026-11-26. An aggTrade has one `T` for fills aggregated over up to 100 ms, while klines bucket the individual fills. An aggTrade that straddles a minute boundary therefore lands wholly in one minute. All 245 minutes with a volume mismatch that day had a multi-fill aggTrade in the last 100 ms of that minute or the previous one (base rate for a random minute: 30%). Mismatches come in +x/−x pairs in adjacent minutes. This cannot be fixed from aggTrades. |
+| Per-minute residual vs klines | Explained 2026-11-26 (30-day `validate-klines`: see PROGRESS Phase 1 step 3). An aggTrade has one `T` for fills aggregated over up to 100 ms, while klines bucket the individual fills. An aggTrade that straddles a minute boundary therefore lands wholly in one minute. All 245 minutes with a volume mismatch that day had a multi-fill aggTrade in the last 100 ms of that minute or the previous one (base rate for a random minute: 30%). Mismatches come in +x/−x pairs in adjacent minutes. This cannot be fixed from aggTrades. |
+
+## Archive data quality (found by `make validate-klines`, 2026-11-26)
+
+| Fact | Status |
+|---|---|
+| aggTrade `T` is the time of the **first** fill; the other fills in `[f, l]` are 0–100 ms later | VERIFIED 2026-11-26: every raw fill of BTCUSDT 2026-11-24 (5,901,953) and ETHUSDT 2026-11-16/17, mapped to its aggTrade via `[f, l]`, has fill time − T in [0, 100] ms |
+| `l − f + 1` is **not** the number of market fills. `[f, l]` ranges contain trade ids that are not in the raw `trades` archive and not in the kline `count` (consistent with "insurance fund and ADL trades are not aggregated"). Σ(l−f+1) exceeds the kline count by 75–4,143 per day. | VERIFIED 2026-11-26. `fill_count` (D-011) is informational only and is not part of the kline mismatch criterion. |
+| The raw `trades` archive (`data/futures/um/daily/trades/{S}/{S}-trades-{D}.zip`, columns `id,price,qty,quote_qty,time,is_buyer_maker`, with header) row count equals the kline `count` exactly | VERIFIED 2026-11-26 (BTCUSDT 2026-10-27: 2,540,264 = 2,540,264) |
+| **The aggTrades archive can have time holes with contiguous aggTrade ids.** On 2026-10-27, 00:02:46 → 00:30:05 UTC, there are no aggTrades for BTCUSDT and ETHUSDT. Klines and the raw `trades` archive have normal trading there (BTC: 38,355 fills; missing volume below). The daily and the monthly (regenerated 2026-11-11) aggTrades archives are identical: same rows, same id range. Id-gap detection cannot see this. | VERIFIED 2026-11-26. Detected now by `data_quality.max_trade_silence_s` (D-026). Not repaired (owner decision pending). |
+
+Missing volume in the hole: BTC 17.344, ETH 1014.017 (kline volume of the 27 hole minutes plus
+the two partial edge minutes).
 
 ## REST (fapi)
 

@@ -72,6 +72,14 @@ class CostsConfig(_Strict):
     slippage_buckets: float = Field(default=1.0, ge=0)
 
 
+class DataQualityConfig(_Strict):
+    max_trade_silence_s: float = Field(
+        default=60.0,
+        gt=0,
+        description="A stretch without any trade longer than this is recorded as a data hole",
+    )
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -79,6 +87,7 @@ class AppConfig(_Strict):
     footprint: FootprintConfig = FootprintConfig()
     levels: LevelsConfig = LevelsConfig()
     costs: CostsConfig = CostsConfig()
+    data_quality: DataQualityConfig = DataQualityConfig()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:

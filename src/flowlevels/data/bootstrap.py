@@ -73,15 +73,16 @@ def render_bootstrap_md(rep: dict[str, Any]) -> str:
         f"commit `{rep['commit']}`, config `{rep['config_hash']}`, "
         f"days {' .. '.join(rep['days'])}, total {rep['seconds_total']} s",
         "",
-        "| symbol | day | status | trades | in-day gaps | missing ids | raw MB | out MB "
-        "| download s | process s |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| symbol | day | status | trades | in-day gaps | missing ids | time holes (min) "
+        "| raw MB | out MB | download s | process s |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rep["days_report"]:
         missing = sum(g["missing"] for g in r["gaps"])
         lines.append(
             f"| {r['symbol']} | {r['day']} | {r['status']} | {r['n_trades']} | {len(r['gaps'])} "
-            f"| {missing} | {r['raw_bytes'] / 1e6:.1f} | {r['out_bytes'] / 1e6:.2f} "
+            f"| {missing} | {_holes_cell(r)} | {r['raw_bytes'] / 1e6:.1f} "
+            f"| {r['out_bytes'] / 1e6:.2f} "
             f"| {r['download_s']} | {r['process_s']} |"
         )
     done = [r for r in rep["days_report"] if r["status"] == "done"]
@@ -94,6 +95,19 @@ def render_bootstrap_md(rep: dict[str, Any]) -> str:
     ]
     lines += ["", "## Cross-day id gaps", ""]
     lines += [f"- {g}" for g in rep["cross_day_gaps"]] or ["- none"]
+    lines += ["", "## Time holes (no trades for longer than max_trade_silence_s, D-026)", ""]
+    hole_lines = [
+        f"- {r['symbol']} {r['day']}: "
+        + ", ".join(
+            f"{dt.datetime.fromtimestamp(h['after_ms'] / 1000, dt.UTC):%H:%M:%S}"
+            f"–{dt.datetime.fromtimestamp(h['before_ms'] / 1000, dt.UTC):%H:%M:%S} "
+            f"({h['seconds']:.0f} s)"
+            for h in r.get("holes", [])
+        )
+        for r in rep["days_report"]
+        if r.get("holes")
+    ]
+    lines += hole_lines or ["- none"]
     lines += ["", "## Disk", ""]
     lines += [f"- {k}: {v / 1e6:.1f} MB" for k, v in rep["disk_bytes"].items()]
     errors = [r for r in rep["days_report"] if r["status"] in ("error", "missing")]
@@ -101,6 +115,13 @@ def render_bootstrap_md(rep: dict[str, Any]) -> str:
         lines += ["", "## Errors / missing", ""]
         lines += [f"- {r['symbol']} {r['day']}: {r['status']} {r['error']}" for r in errors]
     return "\n".join(lines) + "\n"
+
+
+def _holes_cell(r: dict[str, Any]) -> str:
+    holes = r.get("holes", [])
+    if not holes:
+        return "0"
+    return f"{len(holes)} ({sum(h['seconds'] for h in holes) / 60:.1f})"
 
 
 def compare_klines(ohlcv: pl.DataFrame, klines: pl.DataFrame) -> dict[str, Any]:
@@ -117,7 +138,8 @@ def compare_klines(ohlcv: pl.DataFrame, klines: pl.DataFrame) -> dict[str, Any]:
     ).filter(pl.col("k_volume") > 0)  # klines with no trades have no aggTrades either
     j = ohlcv.join(k, on="minute_ts", how="full", coalesce=True)
     only_ours = j.filter(pl.col("k_open").is_null()).height
-    only_klines = j.filter(pl.col("open").is_null()).height
+    only_klines_ts = [int(t) for t in j.filter(pl.col("open").is_null())["minute_ts"].to_list()]
+    only_klines = len(only_klines_ts)
     both = j.drop_nulls(["open", "k_open"])
     d = both.select(
         (pl.col("open") - pl.col("k_open")).abs().alias("d_open"),
@@ -141,16 +163,20 @@ def compare_klines(ohlcv: pl.DataFrame, klines: pl.DataFrame) -> dict[str, Any]:
         | (pl.col("d_low") > 0)
         | (pl.col("d_close") > 0)
         | (pl.col("d_volume") > tol_v)
+        | (pl.col("d_buy") > tol_v)
     ).height
     tot_v = float(both["k_volume"].sum()) if both.height else 0.0
-    boundary = _boundary_clusters(both, tol_v)
+    boundary = _boundary_clusters(both, tol_v, only_klines_ts)
     return {
         "minutes_compared": both.height,
         "minutes_only_aggtrades": only_ours,
         "minutes_only_klines": only_klines,
         "minutes_mismatched": mism,
         "minutes_mismatched_boundary": boundary["explained_minutes"],
+        "minutes_mismatched_day_edge": boundary["day_edge_minutes"],
+        "minutes_mismatched_hole_edge": boundary["hole_edge_minutes"],
         "minutes_mismatched_unexplained": boundary["unexplained_minutes"],
+        "kline_only_minute_ts": only_klines_ts,
         "unexplained_minute_ts": boundary["unexplained_minute_ts"][:20],
         "day_totals": {
             "volume": [float(both["volume"].sum()), tot_v],
@@ -164,62 +190,77 @@ def compare_klines(ohlcv: pl.DataFrame, klines: pl.DataFrame) -> dict[str, Any]:
     }
 
 
-def _boundary_clusters(both: pl.DataFrame, tol_v: float) -> dict[str, Any]:
-    """Classify mismatched minutes (D-023).
+def _boundary_clusters(
+    both: pl.DataFrame, tol_v: float, kline_only_ts: list[int] | None = None
+) -> dict[str, Any]:
+    """Classify mismatched minutes (D-023, D-026).
 
     An aggTrade has one timestamp for fills spread over up to 100 ms, while klines bucket
     individual fills, so an aggTrade that straddles a minute boundary moves volume (and
     possibly the extreme/open/close price) into the neighbouring minute. Mismatched minutes
-    are grouped into runs of consecutive minutes; a run is explained ("boundary") when its
-    signed volume, buy-volume and fill-count differences net to zero. Everything else is
-    unexplained and must be investigated.
+    (OHLC, volume or buy volume) are grouped into runs of consecutive minutes:
+    - boundary: the run's signed volume and buy-volume differences net to zero;
+    - day_edge: the run touches the first or last minute of the UTC day, so its counterpart
+      is in the neighbouring day's file;
+    - hole_edge: the run is next to a minute that has kline volume but no aggTrades;
+    - unexplained: everything else, to be investigated.
+    The fill count (kline `count` vs l - f + 1) is not used: aggTrade fill-id ranges also
+    contain ids that klines do not count (DATA_SOURCES.md).
     """
+    empty = {
+        "explained_minutes": 0,
+        "day_edge_minutes": 0,
+        "hole_edge_minutes": 0,
+        "unexplained_minutes": 0,
+        "unexplained_minute_ts": [],
+    }
     if both.height == 0:
-        return {"explained_minutes": 0, "unexplained_minutes": 0, "unexplained_minute_ts": []}
+        return empty
     x = both.sort("minute_ts").with_columns(
         (pl.col("volume") - pl.col("k_volume")).alias("sv"),
         (pl.col("buy_volume") - pl.col("k_buy")).alias("sb"),
-        (pl.col("n_fills") - pl.col("k_count")).alias("sc"),
     )
-    x = x.with_columns(
-        (
-            (pl.col("open") != pl.col("k_open"))
-            | (pl.col("high") != pl.col("k_high"))
-            | (pl.col("low") != pl.col("k_low"))
-            | (pl.col("close") != pl.col("k_close"))
-            | (pl.col("sv").abs() > tol_v)
-            | (pl.col("sb").abs() > tol_v)
-            | (pl.col("sc") != 0)
-        ).alias("bad")
+    x = x.filter(
+        (pl.col("open") != pl.col("k_open"))
+        | (pl.col("high") != pl.col("k_high"))
+        | (pl.col("low") != pl.col("k_low"))
+        | (pl.col("close") != pl.col("k_close"))
+        | (pl.col("sv").abs() > tol_v)
+        | (pl.col("sb").abs() > tol_v)
     )
-    bad = x.filter(pl.col("bad"))
-    if bad.height == 0:
-        return {"explained_minutes": 0, "unexplained_minutes": 0, "unexplained_minute_ts": []}
-    # A new run starts when the gap to the previous mismatched minute exceeds one minute.
-    bad = bad.with_columns(
-        (pl.col("minute_ts").diff().fill_null(0) > 60_000).cum_sum().alias("run")
-    )
-    runs = bad.group_by("run").agg(
+    if x.height == 0:
+        return empty
+    day0 = int(both["minute_ts"].min()) // 86_400_000 * 86_400_000  # type: ignore[arg-type]
+    edges = {day0, day0 + 86_400_000 - 60_000}
+    holes = set(kline_only_ts or [])
+    # A new run starts when more than one matching minute separates two mismatched minutes.
+    # Bridging one minute covers chained straddles (m -> m+1 and m+1 -> m+2) where the fill
+    # moved into m+1 and the fill moved out of it happen to be equal (verified 2026-11-26
+    # against the raw `trades` archive).
+    x = x.with_columns((pl.col("minute_ts").diff().fill_null(0) > 120_000).cum_sum().alias("run"))
+    runs = x.group_by("run").agg(
         pl.len().alias("n"),
         pl.col("sv").sum().abs().alias("nv"),
         pl.col("sb").sum().abs().alias("nb"),
-        pl.col("sc").sum().abs().alias("nc"),
         pl.col("k_volume").sum().alias("kv"),
         pl.col("minute_ts"),
     )
-    ok = (pl.col("nv") <= tol_v * pl.col("kv") + 1e-9) & (
-        pl.col("nb") <= tol_v * pl.col("kv") + 1e-9
-    )
-    ok = ok & (pl.col("nc") == 0)
-    explained = runs.filter(ok)
-    unexplained = runs.filter(~ok)
-    return {
-        "explained_minutes": int(explained["n"].sum()),
-        "unexplained_minutes": int(unexplained["n"].sum()),
-        "unexplained_minute_ts": sorted(
-            int(t) for ts in unexplained["minute_ts"].to_list() for t in ts
-        ),
-    }
+    out = dict(empty)
+    unexplained_ts: list[int] = []
+    for r in runs.iter_rows(named=True):
+        ts = [int(t) for t in r["minute_ts"]]
+        lim = tol_v * r["kv"] + 1e-9
+        if r["nv"] <= lim and r["nb"] <= lim:
+            out["explained_minutes"] += r["n"]
+        elif any(t in edges for t in ts):
+            out["day_edge_minutes"] += r["n"]
+        elif any(t - 60_000 in holes or t + 60_000 in holes for t in ts):
+            out["hole_edge_minutes"] += r["n"]
+        else:
+            out["unexplained_minutes"] += r["n"]
+            unexplained_ts += ts
+    out["unexplained_minute_ts"] = sorted(unexplained_ts)
+    return out
 
 
 async def validate_klines(
@@ -249,10 +290,10 @@ def render_klines_md(rep: dict[str, Any]) -> str:
     lines = [
         "# 1m kline validation",
         "",
-        "| symbol | day | compared | only aggTr | only kline | mismatched | boundary "
-        "| unexplained | day vol = | day buy = | day fills = | max d_high | max d_low "
-        "| max d_vol |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| symbol | day | compared | only aggTr | only kline (hole) | mismatched | boundary "
+        "| day edge | hole edge | unexplained | day vol = | day buy = | day fills (ours-kline) "
+        "| max d_high | max d_low | max d_vol |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rep["rows"]:
         if "error" in r:
@@ -268,21 +309,26 @@ def render_klines_md(rep: dict[str, Any]) -> str:
             f"| {r['symbol']} | {r['day']} | {r['minutes_compared']} | "
             f"{r['minutes_only_aggtrades']} | {r['minutes_only_klines']} | "
             f"{r['minutes_mismatched']} | {r['minutes_mismatched_boundary']} | "
+            f"{r['minutes_mismatched_day_edge']} | {r['minutes_mismatched_hole_edge']} | "
             f"{r['minutes_mismatched_unexplained']} | {eq(t['volume'])} | "
-            f"{eq(t['buy_volume'])} | {eq(t['n_fills'])} | {m['high']:g} | {m['low']:g} | "
-            f"{m['volume']:g} |"
+            f"{eq(t['buy_volume'])} | {t['n_fills'][0] - t['n_fills'][1]:+d} | "
+            f"{m['high']:g} | {m['low']:g} | {m['volume']:g} |"
         )
     ok = [r for r in rep["rows"] if "error" not in r]
     if ok:
         n = sum(r["minutes_compared"] for r in ok)
         mm = sum(r["minutes_mismatched"] for r in ok)
         b = sum(r["minutes_mismatched_boundary"] for r in ok)
+        de = sum(r["minutes_mismatched_day_edge"] for r in ok)
+        he = sum(r["minutes_mismatched_hole_edge"] for r in ok)
         u = sum(r["minutes_mismatched_unexplained"] for r in ok)
+        ko = sum(r["minutes_only_klines"] for r in ok)
         lines += [
             "",
-            f"**Total:** {n} minutes compared, {mm} mismatched ({mm / n:.2%}), of which "
-            f"{b} are explained by aggTrades straddling a minute boundary (D-023) and "
-            f"{u} ({u / n:.4%}) are unexplained.",
+            f"**Total:** {n} minutes compared, {mm} mismatched ({mm / n:.2%}): {b} boundary "
+            f"straddles netting to zero (D-023), {de} at a UTC day edge, {he} next to a data "
+            f"hole, **{u} unexplained ({u / n:.4%})**. {ko} minutes have kline volume but no "
+            "aggTrades (data holes, D-026).",
         ]
     return "\n".join(lines) + "\n"
 

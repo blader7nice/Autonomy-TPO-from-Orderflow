@@ -35,6 +35,11 @@ levels:
   zone_tolerance_k_atr: 0.15
   weights: {}        # level_type -> weight; default 1.0
 
+data_quality:
+  # aggTrade ids can be contiguous across a hole in the data (2026-10-27 00:02:46-00:30:05
+  # UTC, docs/DATA_SOURCES.md), so time silences are checked as well (D-026).
+  max_trade_silence_s: 60
+
 costs:
   taker_fee: 0.0005
   maker_fee: 0.0002
