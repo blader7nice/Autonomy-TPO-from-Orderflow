@@ -12,6 +12,7 @@ lifetime, backoff). It never enters any market logic (hard rule 3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 import time
@@ -59,6 +60,13 @@ class WatchdogTimeoutError(RuntimeError):
     pass
 
 
+class QueueOverflowError(RuntimeError):
+    pass
+
+
+_END = object()
+
+
 @dataclass
 class LiveConfig:
     max_lifetime_s: float = 23 * 3600  # reconnect proactively before the 24h server limit
@@ -72,6 +80,9 @@ class LiveConfig:
     # which is shared with other services on the host (the adapter also enforces a budget).
     backfill_pause_s: float = 1.0
     liquidations: bool = True
+    # Frames buffered while the consumer is busy (e.g. a long REST backfill). Above this the
+    # connection is dropped and the reconnect backfill recovers the trades.
+    max_queued_frames: int = 2_000_000
 
 
 @dataclass
@@ -136,15 +147,19 @@ class LiveSource:
             connections += 1
             await self._emit("connect", url=url, attempt=attempt)
             started = self._clock()
-            last_wd = started
+            # A reader task drains the socket into a queue continuously, so a long REST
+            # backfill in the consumer never stalls the WebSocket (the server drops slow
+            # consumers). The watchdog is fed by the reader: it measures delivery, not
+            # consumer progress.
+            wd = {"last": started}
+            queue: asyncio.Queue[Any] = asyncio.Queue()
+            reader = asyncio.create_task(self._read(url, queue, wd))
             reason = "server_closed"
-            stream = self.adapter.live_messages(url)
-            it = stream.__aiter__()
             try:
                 while not self._stopped:
                     now = self._clock()
                     life_left = self.cfg.max_lifetime_s - (now - started)
-                    wd_left = self.cfg.watchdog_s - (now - last_wd)
+                    wd_left = self.cfg.watchdog_s - (now - wd["last"])
                     if life_left <= 0:
                         reason = "lifetime"
                         break
@@ -152,20 +167,20 @@ class LiveSource:
                         raise WatchdogTimeoutError(f"no {self.cfg.watchdog_symbol} trades")
                     timeout = min(life_left, wd_left)
                     try:
-                        raw = await asyncio.wait_for(it.__anext__(), timeout=timeout)
-                    except StopAsyncIteration:
-                        break
+                        item = await asyncio.wait_for(queue.get(), timeout=timeout)
                     except TimeoutError:
                         continue  # loop re-evaluates lifetime / watchdog
-                    batch = self.adapter.parse_live_message(raw)
+                    if item is _END:
+                        break
+                    if isinstance(item, BaseException):
+                        raise item
+                    batch = self.adapter.parse_live_message(item)
                     if batch is None:
                         continue
                     attempt = 0
                     if batch.kind == "liquidations":
                         yield batch
                         continue
-                    if batch.symbol == self.cfg.watchdog_symbol or self.cfg.watchdog_symbol is None:
-                        last_wd = self._clock()
                     for out in await self._handle_trades(batch):
                         yield out
             except WatchdogTimeoutError as exc:
@@ -175,12 +190,9 @@ class LiveSource:
                 reason = f"error:{type(exc).__name__}"
                 log.warning("live stream error: %r", exc)
             finally:
-                aclose = getattr(stream, "aclose", None)
-                if aclose is not None:
-                    try:
-                        await aclose()
-                    except Exception:  # pragma: no cover - best effort
-                        log.debug("error closing stream", exc_info=True)
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reader
             await self._emit("disconnect", reason=reason)
             if self._stopped:
                 return
@@ -190,6 +202,30 @@ class LiveSource:
                 continue  # immediate reconnect; the next message triggers gap backfill
             await self._sleep(self._backoff(attempt))
             attempt += 1
+
+    async def _read(self, url: str, queue: asyncio.Queue[Any], wd: dict[str, float]) -> None:
+        """Socket -> queue. Ends with _END or the exception that closed the stream."""
+        sym = self.cfg.watchdog_symbol
+        tag = f'"{sym.lower()}@aggTrade"' if sym is not None else None
+        stream = self.adapter.live_messages(url)
+        try:
+            async for raw in stream:
+                text = raw if isinstance(raw, str) else raw.decode(errors="replace")
+                if tag is None or tag in text:
+                    wd["last"] = self._clock()
+                queue.put_nowait(raw)
+                if queue.qsize() > self.cfg.max_queued_frames:
+                    raise QueueOverflowError(f"{queue.qsize()} frames queued")
+            queue.put_nowait(_END)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            queue.put_nowait(exc)
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                with contextlib.suppress(Exception):
+                    await aclose()
 
     async def _handle_trades(self, batch: Batch) -> list[Batch]:
         tracker = self.trackers.get(batch.symbol)

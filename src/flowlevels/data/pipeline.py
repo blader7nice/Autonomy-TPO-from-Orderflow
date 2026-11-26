@@ -39,6 +39,8 @@ class DayReport:
     raw_bytes: int = 0
     out_bytes: int = 0
     seconds: float = 0.0
+    download_s: float = 0.0  # download + checksum verification
+    process_s: float = 0.0  # parse + build + write
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +81,7 @@ async def process_day(
     except DataNotAvailableError as exc:
         return DayReport(symbol, day.isoformat(), "missing", error=str(exc))
     raw_bytes = path.stat().st_size
+    t_dl = time.perf_counter() - t0
     trades = adapter.read_trades_file(path)
     start = day_start_ms(day)
     outside = trades.filter((pl.col("ts_ms") < start) | (pl.col("ts_ms") >= start + 86_400_000))
@@ -117,6 +120,8 @@ async def process_day(
     if not keep_raw:
         path.unlink(missing_ok=True)
     rep.seconds = round(time.perf_counter() - t0, 3)
+    rep.download_s = round(t_dl, 3)
+    rep.process_s = round(rep.seconds - t_dl, 3)
     return rep
 
 

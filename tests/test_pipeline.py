@@ -171,3 +171,33 @@ def test_compare_klines_exact_match() -> None:
 def test_last_complete_days() -> None:
     days = last_complete_days(3, today=dt.date(2026, 3, 1))
     assert days == [dt.date(2026, 2, 26), dt.date(2026, 2, 27), dt.date(2026, 2, 28)]
+
+
+def test_compare_klines_classifies_boundary_shift_vs_unexplained() -> None:
+    from flowlevels.footprint.minute import ohlcv_from_trades
+
+    trades = _day_trades(DAY, 3_000, 1, 8)
+    ohlcv = ohlcv_from_trades(trades)
+    kl = parse_klines_csv(klines_csv_from_trades(trades))
+    # Boundary shift: 0.001 of buyer volume and one fill move from minute 3 to minute 4 in
+    # the klines (an aggTrade straddling the boundary). Minutes 3 and 4 both mismatch but
+    # net to zero.
+    i = pl.int_range(pl.len())
+    shift = pl.when(i == 3).then(-0.001).when(i == 4).then(0.001).otherwise(0.0)
+    cshift = pl.when(i == 3).then(-1).when(i == 4).then(1).otherwise(0)
+    kl_b = kl.with_columns(
+        pl.col("volume") + shift,
+        pl.col("taker_buy_volume") + shift,
+        pl.col("count") + cshift,
+    )
+    res = compare_klines(ohlcv, kl_b)
+    assert res["minutes_mismatched"] == 2
+    assert res["minutes_mismatched_boundary"] == 2 and res["minutes_mismatched_unexplained"] == 0
+    assert res["day_totals"]["volume"][0] == pytest.approx(res["day_totals"]["volume"][1])
+    # Volume missing from one minute with no compensating neighbour is unexplained.
+    kl_u = kl.with_columns(
+        pl.when(i == 10).then(pl.col("volume") + 1.0).otherwise(pl.col("volume"))
+    )
+    res_u = compare_klines(ohlcv, kl_u)
+    assert res_u["minutes_mismatched_unexplained"] == 1
+    assert res_u["unexplained_minute_ts"] == [int(kl["open_time"][10])]

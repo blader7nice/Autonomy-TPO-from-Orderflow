@@ -73,16 +73,25 @@ def render_bootstrap_md(rep: dict[str, Any]) -> str:
         f"commit `{rep['commit']}`, config `{rep['config_hash']}`, "
         f"days {' .. '.join(rep['days'])}, total {rep['seconds_total']} s",
         "",
-        "| symbol | day | status | trades | in-day gaps | missing ids | raw MB | out MB | s |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| symbol | day | status | trades | in-day gaps | missing ids | raw MB | out MB "
+        "| download s | process s |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rep["days_report"]:
         missing = sum(g["missing"] for g in r["gaps"])
         lines.append(
             f"| {r['symbol']} | {r['day']} | {r['status']} | {r['n_trades']} | {len(r['gaps'])} "
             f"| {missing} | {r['raw_bytes'] / 1e6:.1f} | {r['out_bytes'] / 1e6:.2f} "
-            f"| {r['seconds']} |"
+            f"| {r['download_s']} | {r['process_s']} |"
         )
+    done = [r for r in rep["days_report"] if r["status"] == "done"]
+    lines += [
+        "",
+        f"Totals over {len(done)} processed days: download "
+        f"{sum(r['download_s'] for r in done):.1f} s, processing "
+        f"{sum(r['process_s'] for r in done):.1f} s, raw "
+        f"{sum(r['raw_bytes'] for r in done) / 1e9:.2f} GB downloaded.",
+    ]
     lines += ["", "## Cross-day id gaps", ""]
     lines += [f"- {g}" for g in rep["cross_day_gaps"]] or ["- none"]
     lines += ["", "## Disk", ""]
@@ -134,14 +143,81 @@ def compare_klines(ohlcv: pl.DataFrame, klines: pl.DataFrame) -> dict[str, Any]:
         | (pl.col("d_volume") > tol_v)
     ).height
     tot_v = float(both["k_volume"].sum()) if both.height else 0.0
+    boundary = _boundary_clusters(both, tol_v)
     return {
         "minutes_compared": both.height,
         "minutes_only_aggtrades": only_ours,
         "minutes_only_klines": only_klines,
         "minutes_mismatched": mism,
+        "minutes_mismatched_boundary": boundary["explained_minutes"],
+        "minutes_mismatched_unexplained": boundary["unexplained_minutes"],
+        "unexplained_minute_ts": boundary["unexplained_minute_ts"][:20],
+        "day_totals": {
+            "volume": [float(both["volume"].sum()), tot_v],
+            "buy_volume": [float(both["buy_volume"].sum()), float(both["k_buy"].sum())],
+            "n_fills": [int(both["n_fills"].sum()), int(both["k_count"].sum())],
+        },
         "max_abs_diff": {c[2:]: _max(c) for c in d.columns if c.startswith("d_")},
         "volume_rel_diff_total": (
             abs(float(both["volume"].sum()) - tot_v) / tot_v if tot_v else 0.0
+        ),
+    }
+
+
+def _boundary_clusters(both: pl.DataFrame, tol_v: float) -> dict[str, Any]:
+    """Classify mismatched minutes (D-023).
+
+    An aggTrade has one timestamp for fills spread over up to 100 ms, while klines bucket
+    individual fills, so an aggTrade that straddles a minute boundary moves volume (and
+    possibly the extreme/open/close price) into the neighbouring minute. Mismatched minutes
+    are grouped into runs of consecutive minutes; a run is explained ("boundary") when its
+    signed volume, buy-volume and fill-count differences net to zero. Everything else is
+    unexplained and must be investigated.
+    """
+    if both.height == 0:
+        return {"explained_minutes": 0, "unexplained_minutes": 0, "unexplained_minute_ts": []}
+    x = both.sort("minute_ts").with_columns(
+        (pl.col("volume") - pl.col("k_volume")).alias("sv"),
+        (pl.col("buy_volume") - pl.col("k_buy")).alias("sb"),
+        (pl.col("n_fills") - pl.col("k_count")).alias("sc"),
+    )
+    x = x.with_columns(
+        (
+            (pl.col("open") != pl.col("k_open"))
+            | (pl.col("high") != pl.col("k_high"))
+            | (pl.col("low") != pl.col("k_low"))
+            | (pl.col("close") != pl.col("k_close"))
+            | (pl.col("sv").abs() > tol_v)
+            | (pl.col("sb").abs() > tol_v)
+            | (pl.col("sc") != 0)
+        ).alias("bad")
+    )
+    bad = x.filter(pl.col("bad"))
+    if bad.height == 0:
+        return {"explained_minutes": 0, "unexplained_minutes": 0, "unexplained_minute_ts": []}
+    # A new run starts when the gap to the previous mismatched minute exceeds one minute.
+    bad = bad.with_columns(
+        (pl.col("minute_ts").diff().fill_null(0) > 60_000).cum_sum().alias("run")
+    )
+    runs = bad.group_by("run").agg(
+        pl.len().alias("n"),
+        pl.col("sv").sum().abs().alias("nv"),
+        pl.col("sb").sum().abs().alias("nb"),
+        pl.col("sc").sum().abs().alias("nc"),
+        pl.col("k_volume").sum().alias("kv"),
+        pl.col("minute_ts"),
+    )
+    ok = (pl.col("nv") <= tol_v * pl.col("kv") + 1e-9) & (
+        pl.col("nb") <= tol_v * pl.col("kv") + 1e-9
+    )
+    ok = ok & (pl.col("nc") == 0)
+    explained = runs.filter(ok)
+    unexplained = runs.filter(~ok)
+    return {
+        "explained_minutes": int(explained["n"].sum()),
+        "unexplained_minutes": int(unexplained["n"].sum()),
+        "unexplained_minute_ts": sorted(
+            int(t) for ts in unexplained["minute_ts"].to_list() for t in ts
         ),
     }
 
@@ -173,21 +249,41 @@ def render_klines_md(rep: dict[str, Any]) -> str:
     lines = [
         "# 1m kline validation",
         "",
-        "| symbol | day | compared | only aggTr | only kline | mismatched | max d_high | "
-        "max d_low | max d_vol | vol rel diff | max d_count |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| symbol | day | compared | only aggTr | only kline | mismatched | boundary "
+        "| unexplained | day vol = | day buy = | day fills = | max d_high | max d_low "
+        "| max d_vol |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rep["rows"]:
         if "error" in r:
             lines.append(f"| {r['symbol']} | {r['day']} | error: {r['error']} |")
             continue
         m = r["max_abs_diff"]
+        t = r["day_totals"]
+
+        def eq(a: list[float]) -> str:
+            return "yes" if abs(a[0] - a[1]) <= 1e-9 * max(abs(a[1]), 1.0) else f"{a[0] - a[1]:+g}"
+
         lines.append(
             f"| {r['symbol']} | {r['day']} | {r['minutes_compared']} | "
             f"{r['minutes_only_aggtrades']} | {r['minutes_only_klines']} | "
-            f"{r['minutes_mismatched']} | {m['high']:g} | {m['low']:g} | {m['volume']:g} | "
-            f"{r['volume_rel_diff_total']:.2e} | {m['count']:g} |"
+            f"{r['minutes_mismatched']} | {r['minutes_mismatched_boundary']} | "
+            f"{r['minutes_mismatched_unexplained']} | {eq(t['volume'])} | "
+            f"{eq(t['buy_volume'])} | {eq(t['n_fills'])} | {m['high']:g} | {m['low']:g} | "
+            f"{m['volume']:g} |"
         )
+    ok = [r for r in rep["rows"] if "error" not in r]
+    if ok:
+        n = sum(r["minutes_compared"] for r in ok)
+        mm = sum(r["minutes_mismatched"] for r in ok)
+        b = sum(r["minutes_mismatched_boundary"] for r in ok)
+        u = sum(r["minutes_mismatched_unexplained"] for r in ok)
+        lines += [
+            "",
+            f"**Total:** {n} minutes compared, {mm} mismatched ({mm / n:.2%}), of which "
+            f"{b} are explained by aggTrades straddling a minute boundary (D-023) and "
+            f"{u} ({u / n:.4%}) are unexplained.",
+        ]
     return "\n".join(lines) + "\n"
 
 

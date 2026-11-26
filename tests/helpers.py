@@ -142,6 +142,7 @@ class FakeAdapter:
         symbol: str = "BTCUSDT",
         rest_fail: bool = False,
         rest_error: Exception | None = None,
+        rest_delay_s: float = 0.0,
     ) -> None:
         self.tape = tape
         self.connections = connections
@@ -149,7 +150,10 @@ class FakeAdapter:
         self.rest_calls: list[int] = []
         self.rest_fail = rest_fail
         self.rest_error = rest_error
+        self.rest_delay_s = rest_delay_s
         self.n_connect = 0
+        self.yielded = 0  # frames pulled from the scripted socket
+        self.yielded_at_rest: list[int] = []
 
     def live_url(self, symbols: list[str], liquidations: bool = True) -> str:
         return "fake://" + ",".join(symbols)
@@ -168,10 +172,16 @@ class FakeAdapter:
 
                 await asyncio.sleep(float(item[6:]))
                 continue
+            self.yielded += 1
             yield item
 
     async def fetch_trades_from_id(self, symbol: str, from_id: int, limit: int) -> pl.DataFrame:
         self.rest_calls.append(from_id)
+        if self.rest_delay_s:
+            import asyncio
+
+            await asyncio.sleep(self.rest_delay_s)
+        self.yielded_at_rest.append(self.yielded)
         if self.rest_error is not None:
             raise self.rest_error
         if self.rest_fail:

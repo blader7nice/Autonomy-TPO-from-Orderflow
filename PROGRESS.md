@@ -54,6 +54,16 @@ Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the V
   - `m` semantics confirmed in the docs and empirically: buyer-aggressor volume equals the
     kline taker-buy volume exactly over a full day (117946.8 BTC). The flipped mapping matches
     0% of minutes. Per-minute residual: aggTrades that straddle a minute boundary (D-023).
+- **Step 2: `make bootstrap` ✅ (2026-11-26).** 30 days (2026-10-27 … 2026-11-25), BTCUSDT and
+  ETHUSDT: 60/60 days done, **0 in-day gaps, 0 cross-day gaps**, all checksums OK.
+  99.9M aggTrades (BTC 54.2M, max 3.74M per day; ETH 45.7M). Wall time 5 min 08 s:
+  download+verify 198 s, processing 109 s (max 4.2 s per day), at `nice 10` on 2 vCPU.
+  1.27 GB raw downloaded and streamed (deleted per day). Disk: peak data dir 51 MB (one raw
+  zip in flight), final **14 MB** (footprint_1m 9.4 MB, ohlcv_1m 4.6 MB). Root fs stayed at 41%.
+  Peak RSS 1.07 GB. Report: `docs/acceptance/bootstrap-2026-11-26.md`. The run was on
+  133acd2 plus the uncommitted timing-split change of this commit (hence `-dirty` in the report).
+  - Also: `LiveSource` now drains the socket in a reader task during long backfills (D-025),
+    and kline validation classifies boundary-straddle residuals (D-023).
 - **Pending on the VPS (acceptance):**
   `make verify-api` → `make bootstrap` → `make validate-klines` → `make live-smoke`.
   Record the results here: per-day timing, disk use, gap report, kline residuals, the

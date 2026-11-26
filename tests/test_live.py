@@ -99,7 +99,10 @@ async def test_max_lifetime_reconnects_without_backoff() -> None:
     src = LiveSource(
         adapter,
         ["BTCUSDT"],
-        LiveConfig(max_lifetime_s=20, watchdog_s=1e9),
+        # The fake clock advances one tick per call (the consumer and the socket reader
+        # both read it), so connection 1 (50 frames) exceeds 60 ticks and connection 2
+        # still delivers frames.
+        LiveConfig(max_lifetime_s=60, watchdog_s=1e9),
         sleep=sleep,
         clock=lambda: next(clock),
         max_connections=2,
@@ -156,3 +159,26 @@ def test_hourly_sink_parts_are_session_unique(tmp_path: Path) -> None:
         sink.flush_all()
     files = list(store.files("raw_aggtrades", "BTCUSDT", dt.date(2026, 1, 1), dt.date(2026, 1, 1)))
     assert len(files) == 2
+
+
+async def test_socket_is_drained_and_watchdog_quiet_during_slow_backfill() -> None:
+    # Resume at id 40 -> the first frame (id 51) opens a gap. Each REST page takes 0.1 s
+    # (two pages -> 0.2 s), longer than the 0.15 s watchdog. Frames keep arriving every
+    # 10 ms. The reader must keep draining the socket during the backfill, and the
+    # watchdog must not fire because trades are still being delivered.
+    paced: list[str] = []
+    for f in FRAMES[50:120]:
+        paced += [f, "sleep:0.01"]
+    adapter = FakeAdapter(TAPE, [paced], rest_delay_s=0.1)
+    src = LiveSource(
+        adapter,
+        ["BTCUSDT"],
+        LiveConfig(backfill_page=5, watchdog_s=0.15, backfill_pause_s=0.0),
+        resume_ids={"BTCUSDT": 40},
+        max_connections=1,
+    )
+    got = [b.df async for b in src]
+    assert _ids(got) == list(range(41, 121))
+    assert "watchdog" not in [e.kind for e in src.events]
+    # While the first REST page was in flight, the reader kept pulling frames.
+    assert adapter.yielded_at_rest[-1] > 5
