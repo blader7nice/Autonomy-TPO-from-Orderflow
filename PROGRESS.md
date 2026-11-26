@@ -86,6 +86,27 @@ Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the V
     owner decision).
   - The bootstrap was re-run to record holes (footprint format v2): 5 min 05 s, same results.
   - Reports: `docs/acceptance/klines-2026-11-26.md`, `docs/acceptance/bootstrap-2026-11-26.md`.
+- **Step 4: `make live-smoke` ✅ (2026-11-26), 2 runs of 1 h.**
+  - **Run 1 (13:48–14:48 UTC, cold start, code at step 3).** The resume from bootstrap
+    (2026-11-25 23:59:59) backfilled today via REST: BTC 817,011 ids in 17.5 min and ETH
+    563,332 in 12.2 min. All resolved, with no 429s and no disconnect during backfill (reader
+    task, D-025). **Two watchdog reconnects:**
+    (a) 14:18:40, a bug: draining the ~30 min backlog after the backfills starved the reader
+    task (`await queue.get()` does not yield when items are waiting). The benchmark also showed
+    the consumer at **~10 ms per single-frame batch (~100 frames/s)**, below burst rates.
+    Fixed by micro-batching plus a yield per step: 3,400 frames/s (D-027), with regression tests.
+    (b) 14:38:07: BTC and ETH both silent for 70 s in a quiet market with no backlog. This was
+    a server-side stall; the watchdog worked as designed. Both reconnect gaps were backfilled
+    (14,410/11,241 and 1,296/1,367 ids). 1.46M trades, 0 exceptions, peak RSS 381 MB, 36% CPU
+    (backfill-heavy).
+  - **Run 2 (14:52–15:52 UTC, final code).** Restart resume gap 5,680 BTC / 4,835 ETH
+    backfilled in 13 s. Then **0 reconnects, 0 watchdog, 0 gaps, 0 exceptions or warnings**.
+    269k trades, 22% of one CPU, peak RSS 516 MB, data dir +2 MB.
+  - **End to end:** today's stored raw ticks from 00:00:00 to 15:52:42 are id-contiguous (0
+    holes), starting at bootstrap last id + 1, through the cold start, reconnects and the restart.
+    Max silence 5.3 s (BTC) / 4.7 s (ETH). Liquidations captured: 169 BTC, 141 ETH.
+  - No ping-related disconnects in 2 h (server pings every 3 min are answered by `websockets`).
+  - Reports: `docs/acceptance/live-smoke-run{1,2}-*.md`.
 - **Pending on the VPS (acceptance):**
   `make verify-api` → `make bootstrap` → `make validate-klines` → `make live-smoke`.
   Record the results here: per-day timing, disk use, gap report, kline residuals, the

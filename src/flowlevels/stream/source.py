@@ -83,6 +83,8 @@ class LiveConfig:
     # Frames buffered while the consumer is busy (e.g. a long REST backfill). Above this the
     # connection is dropped and the reconnect backfill recovers the trades.
     max_queued_frames: int = 2_000_000
+    # Upper bound on frames merged into one consumer batch (D-027).
+    max_batch_frames: int = 20_000
 
 
 @dataclass
@@ -170,19 +172,38 @@ class LiveSource:
                         item = await asyncio.wait_for(queue.get(), timeout=timeout)
                     except TimeoutError:
                         continue  # loop re-evaluates lifetime / watchdog
-                    if item is _END:
+                    # Micro-batch: take everything already queued (up to a cap) and process
+                    # it as one batch per symbol. Consumers are batch-size invariant (D-010);
+                    # per-frame processing costs ~9 ms of polars call overhead, so single-
+                    # frame batches cap throughput near 100 frames/s (D-027).
+                    items = [item]
+                    while len(items) < self.cfg.max_batch_frames and not queue.empty():
+                        items.append(queue.get_nowait())
+                    # `queue.get()` does not yield when items are waiting; yield so a backlog
+                    # never starves the reader task, the websocket I/O or the watchdog feed.
+                    await asyncio.sleep(0)
+                    terminal: Any = None
+                    trades: dict[str, list[pl.DataFrame]] = {}
+                    for it in items:
+                        if it is _END or isinstance(it, BaseException):
+                            terminal = it  # the reader puts nothing after a terminal item
+                            break
+                        batch = self.adapter.parse_live_message(it)
+                        if batch is None:
+                            continue
+                        attempt = 0
+                        if batch.kind == "liquidations":
+                            yield batch
+                        else:
+                            trades.setdefault(batch.symbol, []).append(batch.df)
+                    for sym, dfs in trades.items():
+                        merged = dfs[0] if len(dfs) == 1 else pl.concat(dfs)
+                        for out in await self._handle_trades(Batch(sym, "trades", merged)):
+                            yield out
+                    if terminal is _END:
                         break
-                    if isinstance(item, BaseException):
-                        raise item
-                    batch = self.adapter.parse_live_message(item)
-                    if batch is None:
-                        continue
-                    attempt = 0
-                    if batch.kind == "liquidations":
-                        yield batch
-                        continue
-                    for out in await self._handle_trades(batch):
-                        yield out
+                    if terminal is not None:
+                        raise terminal
             except WatchdogTimeoutError as exc:
                 reason = "watchdog"
                 await self._emit("watchdog", error=str(exc))
@@ -228,29 +249,42 @@ class LiveSource:
                     await aclose()
 
     async def _handle_trades(self, batch: Batch) -> list[Batch]:
+        """De-duplicate, backfill every id gap (at the start of or inside the batch) and
+        return one id-ordered batch. Gaps that cannot be filled stay recorded as unresolved.
+        """
         tracker = self.trackers.get(batch.symbol)
         if tracker is None:
             return []
         df = tracker.drop_seen(batch.df)
         if df.height == 0:
             return []
-        out: list[Batch] = []
-        gaps = tracker.find_gaps(df.head(1))
-        if gaps:
-            gap = gaps[0]
+        if df.height > 1 and not bool((df["trade_id"].diff().drop_nulls() > 0).all()):
+            df = df.unique("trade_id", keep="first", maintain_order=True).sort("trade_id")
+        gaps = tracker.find_gaps(df)
+        parts = [df]
+        resolved: list[Gap] = []
+        for gap in gaps:
             await self._emit("gap", **gap.to_dict())
             filled, reason = await self._backfill(batch.symbol, gap)
             if filled is not None and filled.height:
-                tracker.observe(filled)
-                out.append(Batch(batch.symbol, "trades", filled))
-            if filled is not None and tracker.last_id == gap.before_id - 1:
-                tracker.record_resolved(gap, "rest_backfill")
+                parts.append(filled)
+            complete = (
+                filled is not None
+                and filled.height == gap.missing
+                and int(filled["trade_id"][0]) == gap.after_id + 1
+                and int(filled["trade_id"][-1]) == gap.before_id - 1
+            )
+            if complete:
+                assert filled is not None
+                resolved.append(gap)
                 await self._emit("backfill", symbol=batch.symbol, n=filled.height)
             else:
                 await self._emit("backfill_failed", reason=reason, **gap.to_dict())
-        tracker.observe(df)  # records the gap as unresolved if backfill failed
-        out.append(Batch(batch.symbol, "trades", df))
-        return out
+        merged = df if len(parts) == 1 else pl.concat(parts).sort("trade_id")
+        tracker.observe(merged)  # records any gap that is still open as unresolved
+        for gap in resolved:
+            tracker.record_resolved(gap, "rest_backfill")
+        return [Batch(batch.symbol, "trades", merged)]
 
     async def _backfill(self, symbol: str, gap: Gap) -> tuple[pl.DataFrame | None, str]:
         """REST backfill of a gap. Returns (trades or None, failure reason or "")."""

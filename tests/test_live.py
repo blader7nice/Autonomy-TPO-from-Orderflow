@@ -89,8 +89,8 @@ async def test_watchdog_triggers_reconnect() -> None:
 
 
 async def test_max_lifetime_reconnects_without_backoff() -> None:
-    clock = iter(float(i) for i in range(10_000))
-    adapter = FakeAdapter(TAPE, [FRAMES[:50], FRAMES[50:80]])
+    # Each connection delivers its frames, then idles past the 0.2 s lifetime (real clock).
+    adapter = FakeAdapter(TAPE, [[*FRAMES[:50], "sleep:1"], [*FRAMES[60:80], "sleep:1"]])
     slept: list[float] = []
 
     async def sleep(s: float) -> None:
@@ -99,20 +99,15 @@ async def test_max_lifetime_reconnects_without_backoff() -> None:
     src = LiveSource(
         adapter,
         ["BTCUSDT"],
-        # The fake clock advances one tick per call (the consumer and the socket reader
-        # both read it), so connection 1 (50 frames) exceeds 60 ticks and connection 2
-        # still delivers frames.
-        LiveConfig(max_lifetime_s=60, watchdog_s=1e9),
+        LiveConfig(max_lifetime_s=0.2, watchdog_s=1e9),
         sleep=sleep,
-        clock=lambda: next(clock),
         max_connections=2,
     )
     got = [b.df async for b in src]
-    assert "lifetime" in [e.kind for e in src.events]
-    ids = _ids(got)
-    # Connection 1 is cut by the lifetime limit; connection 2 starts at id 51, so the ids
-    # in between are backfilled from REST: the output is contiguous from 1.
-    assert ids == list(range(1, ids[-1] + 1)) and ids[-1] > 51
+    assert [e.kind for e in src.events].count("lifetime") == 2
+    # Connection 2 starts at id 61, so ids 51..60 are backfilled from REST: the output is
+    # contiguous.
+    assert _ids(got) == list(range(1, 81))
     # Proactive reconnect does not back off (only backfill page pauses were slept).
     assert all(s == LiveConfig().backfill_pause_s for s in slept)
 
@@ -136,7 +131,7 @@ async def test_collector_writes_hourly_parts_and_resumes(tmp_path: Path) -> None
         CFG,
         store,
         ["BTCUSDT"],
-        duration_s=0.5,
+        duration_s=3.0,  # wall clock; generous so a loaded CI box still drains 200 frames
         live_cfg=LiveConfig(watchdog_s=1e9),
     )
     assert rep["trades"]["BTCUSDT"] == 200
@@ -182,3 +177,40 @@ async def test_socket_is_drained_and_watchdog_quiet_during_slow_backfill() -> No
     assert "watchdog" not in [e.kind for e in src.events]
     # While the first REST page was in flight, the reader kept pulling frames.
     assert adapter.yielded_at_rest[-1] > 5
+
+
+async def test_backlog_is_drained_in_micro_batches_with_yields() -> None:
+    # The scripted socket delivers 250 frames without awaiting, so they are all queued
+    # before the consumer runs. They must be processed as one micro-batch (per-frame
+    # processing costs ~9 ms, D-027), and the consumer must yield to the event loop between
+    # batches: `await queue.get()` on a non-empty queue does not yield, and a backlog once
+    # starved the reader task and the watchdog feed (seen live on 2026-11-26).
+    import asyncio
+
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    t = asyncio.create_task(ticker())
+    adapter = FakeAdapter(TAPE, [[*FRAMES[:250], "sleep:0.05", *FRAMES[250:]]])
+    src = LiveSource(adapter, ["BTCUSDT"], LiveConfig(watchdog_s=30), max_connections=1)
+    sizes = [b.df.height async for b in src]
+    t.cancel()
+    assert sum(sizes) == 300 and sizes[0] == 250
+    assert ticks >= len(sizes)
+
+
+async def test_gap_inside_a_micro_batch_is_backfilled() -> None:
+    # Frames 1..20 and 31..60 arrive back to back and are merged into one batch; the gap
+    # 21..30 is inside the batch, not at its start.
+    adapter = FakeAdapter(TAPE, [[*FRAMES[:20], *FRAMES[30:60]]])
+    src = LiveSource(adapter, ["BTCUSDT"], LiveConfig(watchdog_s=30), max_connections=1)
+    got = [b.df async for b in src]
+    assert _ids(got) == list(range(1, 61))
+    gaps = src.trackers["BTCUSDT"].gaps
+    assert [(g.after_id, g.before_id, g.resolved) for g in gaps] == [(20, 31, True)]
+    assert adapter.rest_calls == [21]
