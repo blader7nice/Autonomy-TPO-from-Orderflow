@@ -1,6 +1,5 @@
 """CLI levels/footprint/sanity-plot on a SYNTHETIC store (output goes to tmp, not docs/)."""
 
-import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -29,6 +28,11 @@ def store(tmp_path_factory: pytest.TempPathFactory) -> ParquetStore:
     oh, fp = pl.concat([a.ohlcv, z.ohlcv]), pl.concat([a.footprint, z.footprint])
     st.write_split_by_day("ohlcv_1m", "BTCUSDT", "hist", oh, "minute_ts")
     st.write_split_by_day("footprint_1m", "BTCUSDT", "hist", fp, "minute_ts")
+    # Days 0-3 are complete archive days; day 4 plays today's partial live day.
+    days = st.days("ohlcv_1m", "BTCUSDT")
+    for d in days[:-1]:
+        holes = [{"after_ms": T0 + 3_600_000, "before_ms": T0 + 5_400_000, "seconds": 1800.0}]
+        st.mark_complete("ohlcv_1m", "BTCUSDT", d, {"holes": holes if d == days[0] else []})
     return st
 
 
@@ -53,7 +57,15 @@ def test_cli_levels_and_footprint(
 
 
 def test_sanity_plot(store: ParquetStore, tmp_path: Path) -> None:
-    days = pick_days(store, "BTCUSDT", 2)
-    assert len(days) == 2 and all(d >= dt.date(2026, 1, 2) for d in days)
+    days = pick_days(store, "BTCUSDT", 10)
+    all_days = store.days("ohlcv_1m", "BTCUSDT")
+    # Complete days with a prior day: days 1-3. Day 0 has no prior day; day 4 is partial.
+    assert days == all_days[1:-1]
     p = sanity_plot(store, CFG, "BTCUSDT", days[0], tmp_path)
+    assert p.exists() and p.stat().st_size > 10_000
+
+
+def test_sanity_plot_with_hole(store: ParquetStore, tmp_path: Path) -> None:
+    day0 = store.days("ohlcv_1m", "BTCUSDT")[0]
+    p = sanity_plot(store, CFG, "BTCUSDT", day0, tmp_path)
     assert p.exists() and p.stat().st_size > 10_000

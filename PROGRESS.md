@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the VPS after Phase 1 acceptance)
+Current phase: **Phase 1/2 VPS acceptance done (2026-11-26). STOP: owner reviews the sanity plots and the HVN/zone issue before Phase 3.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -134,9 +134,16 @@ Current phase: **3 — detectors + 60-day tuning backtest** (next; runs on the V
   **No-lookahead property test**: levels at a random t from the full data equal levels
   from trades truncated at t, which include a partial open minute. This test found the
   non-deterministic float summation fixed in D-017.
-- Pending on the VPS: `make sanity-plots` (3 random real days per symbol into
-  docs/sanity/) and `make levels TS=...` spot checks against TradingView, after
-  `make bootstrap`.
+- **`make sanity-plots` ✅ (2026-11-26):** 3 random real days (2026-10-28, 10-31, 11-17; seed
+  42) × BTC/ETH in `docs/sanity/`, with review notes in `docs/sanity/README.md`. Only complete
+  archive days are eligible, and data holes are shaded grey. Candles, daily VWAP and the ±1σ/±2σ
+  bands, PDH/PDL and value area look right.
+  **Problem found, to fix before Phase 3:** HVN/LVN are far too dense (BTC 2026-11-17: 28 HVN +
+  27 LVN from one day) because of a height test (≥10% of max) on a profile smoothed over only
+  50 USD. Single-linkage confluence then chains everything into one zone covering most of the
+  prior-day range (score 71, 1,750 USD ≈ 3.9 ATR). The proposed fix is in the README. It is not
+  applied: it is the owner's review item.
+- Still open: `make levels TS=...` spot checks against TradingView (manual, owner).
 - Open issues: `compute_levels` recomputes everything from frames on every call. Prior-
   session levels are constant within a session and should be cached per (symbol, day)
   before the Phase 3 bar-by-bar backtest; profile this first.

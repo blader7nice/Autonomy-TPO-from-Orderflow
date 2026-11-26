@@ -142,6 +142,16 @@ def sanity_plot(
     for z in ls.zones:
         if lo_y - pad <= z.price <= hi_y + pad and len(z.members) > 1:
             ax.axhspan(z.low, z.high, color="#e9c46a", alpha=0.25)
+    # Data holes recorded by the day pipeline (D-026): no trades in the archive there.
+    info = store.completion("ohlcv_1m", symbol, day) or {}
+    for i, h in enumerate(info.get("holes", [])):
+        ax.axvspan(
+            max(h["after_ms"] - start, 0) / 3_600_000,
+            min(h["before_ms"] - start, 86_400_000) / 3_600_000,
+            color="#adb5bd",
+            alpha=0.5,
+            label="data hole (no aggTrades in archive)" if i == 0 else None,
+        )
     ax.set_xlim(0, 26.5)
     ax.set_ylim(lo_y - pad, hi_y + pad)
     ax.set_xlabel("hour (UTC)")
@@ -157,8 +167,12 @@ def sanity_plot(
 
 
 def pick_days(store: ParquetStore, symbol: str, n: int, seed: int = 42) -> list[dt.date]:
-    """n random days that have a full prior day (and week where available) stored."""
+    """n random complete (archive-built) days that have a full prior day stored.
+
+    Days without a completion marker (e.g. today's partial live day) are never picked.
+    """
     days = store.days("ohlcv_1m", symbol)
-    eligible = [d for d in days if d - dt.timedelta(days=1) in days]
+    done = [d for d in days if store.completion("ohlcv_1m", symbol, d) is not None]
+    eligible = [d for d in done if d - dt.timedelta(days=1) in days]
     rnd = random.Random(seed)
     return sorted(rnd.sample(eligible, min(n, len(eligible))))
