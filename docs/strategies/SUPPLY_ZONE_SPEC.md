@@ -121,6 +121,8 @@ the log also shows a period of `short_disabled_long_only_mode`.
 | A9 | No time stop | None; trades still open at the end of data are closed at the last close and flagged. |
 | A10 | Order types | All fills taker (market, stop_market, take_profit_market). |
 | A11 | RSI used for the decision vs logged | Decision uses the strategy's SMA RSI; the checker's EWM RSI is logging only. |
+| A13 | Reward/risk for the partial-TP and final gates uses `abs()` (a TP2 on the losing side would pass) | Replicated as in the live code; such a TP2 fills immediately (A5). |
+| A14 | TP1 is detected and the stop moved to break-even only at the next hourly tick | Replicated: after TP1 the remainder keeps the original stop until the next scan, then BE + trail. |
 | A12 | Daily-loss / position / cooldown skips hide whether a signal existed | Those log rows are excluded from the core-signal comparison (regime still compared). |
 
 ## 9. Original tests
