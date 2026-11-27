@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **Phase 3 in-sample tuning report done (2026-11-27). STOP before Phase 3b: the owner reviews the frozen config, the 36 configurations tried and the MDE. The hold-out has NOT been run (0 runs).**
+Current phase: **ITERATION-1 KILLED (2026-11-27). The orderflow-confirmation trading thesis is killed by its pre-registered criterion; hold-out not run (0 runs). STOP: owner decides next steps.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -253,3 +253,18 @@ Current phase: **Phase 3 in-sample tuning report done (2026-11-27). STOP before 
   4. Memory: the run holds all trades in RAM. The 9-month hold-out (~4.5× sessions) needs
      streaming per symbol/resolution before it can run on this VPS.
   5. Bootstrap the 9 months, check for unrepaired holes.
+
+## ITERATION-1 (owner decision 2026-11-27) — KILLED ❌
+- Owner review of the Phase 3 run: do not run the hold-out; one pre-registered iteration
+  (DECISIONS `ITERATION-1`, commit 4e1f1f0, logged before any code or run). The iteration
+  uses confirmation as entry timing for level-to-level trades: first touches, minimum stop
+  max(k·ATR, 3 × round-trip cost), target = next static zone ≥ 1.5 R, 48-bar time stop,
+  12-config grid, selection = max net R with N ≥ 100, kill if ≤ 0 R.
+- Zone-score median frozen from zones only = 1 → the score filter admits all zones (D-037).
+- Run `20261127T123132Z-it1-17320d07` (commit fda6ff5): **no configuration reaches 100
+  treatment trades (max 10); treatment net expectancy negative in all 12** → **KILL**.
+  Cause: the cost-based minimum stop (~40 bps) plus the ≥ 1.5 R target to the next zone
+  rejects ~85% of setups in every group. Random control net negative, gross ≈ 0, so there
+  is no bug signal. Configurations tried in the tuning window: 48 in total.
+- Summary: `docs/research/KILL-ITERATION-1.md`; report `docs/research/REPORT-20261127T123132Z-it1-17320d07.md`.
+- Not done, by design: chunked processing, the 9-month download, the hold-out.
