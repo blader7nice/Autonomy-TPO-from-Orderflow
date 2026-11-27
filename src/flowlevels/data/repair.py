@@ -151,11 +151,20 @@ async def repair_day_holes(
             empty, [], [{**h, "repair_error": f"source missing: {exc}"} for h in holes]
         )
     source = {"file": tpath.name, "sha256": sha256_file(tpath)}
-    all_fills = adapter.read_raw_trades_file(tpath)
-    klines = adapter.read_klines_file(kpath)
-    if not keep_raw:
-        tpath.unlink(missing_ok=True)
-        kpath.unlink(missing_ok=True)
+    try:
+        all_fills = adapter.read_raw_trades_file(tpath)
+        klines = adapter.read_klines_file(kpath)
+    except ValueError as exc:
+        # Inconsistent source archive (e.g. reused trade ids around an exchange outage):
+        # never repair from it; the holes stay unrepaired and are excluded downstream.
+        all_fills = None
+        err = f"source inconsistent: {exc}"
+    finally:
+        if not keep_raw:
+            tpath.unlink(missing_ok=True)
+            kpath.unlink(missing_ok=True)
+    if all_fills is None:
+        return RepairOutcome(empty, [], [{**h, "repair_error": err, **source} for h in holes])
     out = RepairOutcome(empty)
     good: list[pl.DataFrame] = []
     for h in holes:

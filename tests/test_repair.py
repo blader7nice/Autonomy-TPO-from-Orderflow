@@ -140,6 +140,20 @@ async def test_failed_check_keeps_hole_as_exclusion(tmp_path: Path) -> None:
     assert len(load_holes(store, "BTCUSDT")) == 1  # the exclusion fallback applies
 
 
+async def test_inconsistent_raw_archive_keeps_hole(tmp_path: Path) -> None:
+    """Reused trade ids in the raw archive (seen on ETHUSDT 2025-08-29): no repair, no crash."""
+    fills = _fills()
+    dup = pl.concat([fills.head(1000), fills.slice(999, 1), fills.slice(1000)])
+    store = ParquetStore(tmp_path / "data")
+    rep = await process_day(
+        _adapter(_server(fills, raw=dup)), store, CFG, "BTCUSDT", DAY, tmp_path / "raw"
+    )
+    assert rep.status == "done" and rep.repairs == [] and len(rep.holes) == 1
+    assert rep.holes[0]["repair_error"].startswith("source inconsistent")
+    assert len(load_holes(store, "BTCUSDT")) == 1
+    assert list((tmp_path / "raw").glob("*.zip")) == []
+
+
 async def test_complete_day_supersedes_live_parts(tmp_path: Path) -> None:
     fills = _fills(5_000)
     store = ParquetStore(tmp_path / "data")
