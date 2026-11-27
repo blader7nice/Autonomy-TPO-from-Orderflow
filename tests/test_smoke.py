@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_default_config_loads() -> None:
     cfg = load_config(ROOT / "configs/default.yaml")
-    assert set(cfg.symbols) == {"BTCUSDT", "ETHUSDT"}
+    assert set(cfg.symbols) == {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"}
+    assert set(cfg.costs.execution_instruments) == set(cfg.symbols)
     assert cfg.symbol("BTCUSDT").bucket == 10.0
 
 

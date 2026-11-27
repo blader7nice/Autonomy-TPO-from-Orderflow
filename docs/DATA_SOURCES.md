@@ -164,6 +164,14 @@ official API. Margin in USDC is an account setting (multi-currency / portfolio m
 an instrument property, so the API cannot confirm it. Fees for these instruments on the
 owner's EEA account: **UNCONFIRMED** (see below).
 
+**ITERATION-5 symbols (public API only, not owner-confirmed).** Same endpoint, queried
+2026-11-27 (`instType=SWAP`, all instruments): SOL-USD-SWAP (inverse, 10 USD, tick 0.01, min 1
+contract), XRP-USD-SWAP (inverse, 10 USD, tick 0.0001, min 1), DOGE-USD-SWAP (inverse, 10 USD,
+tick 0.00001, min 1). **No inverse BNB swap is listed on OKX EEA**; BNB-USDT-SWAP (linear,
+0.01 BNB, tick 0.01, min 1) is the execution assumption. Binance USD-M signal ticks
+(`/fapi/v1/exchangeInfo`, 2026-11-27): SOL 0.01, BNB 0.01, XRP 0.0001, DOGE 0.00001. Fees: the
+same UNCONFIRMED placeholder as BTC/ETH.
+
 **Effect on R/bps (D-033).** An inverse contract with USD notional Q has
 PnL_coin = Q·(1/P0 − 1/P1). Converted at the exit price P1, PnL_USD = Q·(P1 − P0)/P0,
 which is exactly the PnL of a linear contract with notional Q. Fees are charged on the USD

@@ -1,6 +1,6 @@
 # FLOWLEVELS versioned config. Bump `version` on any change that affects results.
 # The config hash (flowlevels.config.config_hash) is recorded in every report.
-version: 3
+version: 4
 
 symbols:
   BTCUSDT:
@@ -11,6 +11,24 @@ symbols:
     exchange_tick: 0.01
     bucket: 0.5
     tpo_tick: 0.5
+  # ITERATION-5 symbols (candles only). bucket = tpo_tick = 1.5 bps x median 1m close of window A,
+  # rounded up to the Binance tick (pre-registered rule; values in DECISIONS D-044).
+  SOLUSDT:
+    exchange_tick: 0.01
+    bucket: 0.03
+    tpo_tick: 0.03
+  BNBUSDT:
+    exchange_tick: 0.01
+    bucket: 0.11
+    tpo_tick: 0.11
+  XRPUSDT:
+    exchange_tick: 0.0001
+    bucket: 0.0004
+    tpo_tick: 0.0004
+  DOGEUSDT:
+    exchange_tick: 0.00001
+    bucket: 0.00003
+    tpo_tick: 0.00003
 
 retention:
   raw_live_ticks_days: 7
@@ -110,6 +128,54 @@ costs:
       status: confirmed by owner
       as_of: "2026-11-27"
       source: eea.okx.com /api/v5/public/instruments (DATA_SOURCES.md)
+    SOLUSDT:
+      venue: OKX EEA
+      inst_id: SOL-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: SOL
+      tick: 0.01
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    BNBUSDT:
+      venue: OKX EEA
+      inst_id: BNB-USDT-SWAP
+      contract_type: linear
+      contract_value: 0.01
+      contract_value_ccy: BNB
+      settle_ccy: USDT
+      tick: 0.01
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed (no inverse BNB swap listed)
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    XRPUSDT:
+      venue: OKX EEA
+      inst_id: XRP-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: XRP
+      tick: 0.0001
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    DOGEUSDT:
+      venue: OKX EEA
+      inst_id: DOGE-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: DOGE
+      tick: 1e-05
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
 
 # ---- Phase 3 (config v3). Defaults fixed before any outcome was seen (D-035).
 signals:
