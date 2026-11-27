@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-5 (FINAL, binding hold-out) KILLED at the in-sample gate; the hold-out was not run (0 runs). STOP.**
+Current phase: **LIVE PAPER FORWARD TEST of the ITERATION-5 method — built, smoke-tested, ready for install (2026-11-27). STOP: the owner installs the systemd units and Tailscale (`docs/DEPLOY.md`); the official paper start is the first systemd start.** FINAL-KILL stands (the paper test changes no verdict). Hold-out runs: 0.
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -329,3 +329,50 @@ Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-5 (FINAL, binding 
   N 218, A −0.116, B +0.127, A+B −0.079 R, 2/6 symbols positive → KILLED (D-045).
 - Reports: `docs/research/ITER5-20261127T194620Z-iter5-da431f34.md`, `docs/research/TRADES-ITER5.md` (10 charts).
 - Cumulative in-sample configurations: **77**. STOP. The hold-out was never run.
+
+## LIVE PAPER FORWARD TEST (owner, 2026-11-27) — ✅ built + smoke-tested, ⏳ owner install
+No real orders and no exchange keys. The plan was logged before any code
+(DECISIONS `PAPER-PLAN`, 404a019). The decision rules are fixed in `docs/PAPER_TEST.md`.
+
+Variants, rules frozen per version (rules hash):
+- a `T2|k0.5|trail` `5f187deaebad`
+- b `T2|k0.5|lvl` `4212db816bd3`
+- c `T2|wick|trail` `8d6c2744357c`
+- d `T1|k0.5|lvl` `b4d08eeff602`
+
+Each variant trades BTC, ETH, SOL, BNB, XRP and DOGE and has its own ledger.
+
+Steps:
+1. **Strategy split** into `prepare` + `trades` (ITERATION-5 output identical), wick stop for
+   variant c, signal rows, config v5 (2bf76dc).
+2. **Variant c reference backtest**, run once on A+B: N 631, **−0.221 R** (−14.0 bps).
+   Variants a, b and d are identical to ITERATION-5. **Cumulative configurations: 78** (D-046,
+   d9c63fa).
+3. **Paper engine** (5b670b4):
+   - REST 1m kline feed + live store; the research code path recomputes every minute.
+   - SQLite ledger: signals, trades, chart payloads and PNGs.
+   - Divergence guard; Telegram outbox; stall, disk and weekly-summary checks.
+   - Restart-safe with REST backfill (trades found that way are marked LATE).
+4. **Dashboard** (1ecb318):
+   - FastAPI read-only API + WebSocket, bound to 127.0.0.1.
+   - Lightweight-charts terminal UI: one `theme.css`, dark, tabular numerals.
+   - Pages: Chart, Positions, Trades plus a trade sheet, Performance, Health.
+   - DEMO database = window B replayed through the engine (153/153 trades equal).
+   - Playwright design QA at 1440 / 390 px over several fix rounds; final screenshots in
+     `docs/screens/`.
+5. **Deploy** (76d7ccb, 346bcbd):
+   - systemd units `deploy/systemd/flowlevels-{paper,web}.service`: user flow, caps, sandboxed.
+   - `docs/DEPLOY.md`: .env, units, Tailscale serve, phone.
+   - `flowlevels telegram-test`.
+   - "How to read the dashboard" in `docs/PAPER_TEST.md`.
+   - Stale-snapshot re-poll (D-047).
+6. **1-hour live smoke run** (`docs/paper/SMOKE-20261127.md`):
+   - Status `running` in 242 of 242 samples.
+   - Lag median 39 s, p95 66 s, max 71 s (up to ~120 s before the D-047 fix).
+   - Engine RSS ~190 MB (peak 233 MB with a large backfill); web ~95 MB; disk 45 %.
+   - No errors. 0 signals in the hour (expected).
+   - Restarts resumed cleanly with the same versions.
+   - Telegram not tested live: the token is not set yet.
+
+193 tests. Cumulative in-sample configurations: **78**. Hold-out runs: **0**.
+STOP for the owner's install.
