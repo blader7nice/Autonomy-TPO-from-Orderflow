@@ -73,6 +73,7 @@ Sources used:
 | Daily ids are contiguous within a day | VERIFIED live 2026-11-26 (BTCUSDT 2026-11-24: 2,462,147 rows, no gaps) |
 | Archive `quantity` equals REST `q` (RPI-inclusive) for the same ids | VERIFIED live 2026-11-26: the last 1000 ids of 2026-11-24 are identical in archive and REST (price, qty, T, m, fill count) |
 | USD-M 1m klines file `data/futures/um/daily/klines/{SYMBOL}/1m/{SYMBOL}-1m-{YYYY-MM-DD}.zip` | VERIFIED live 2026-11-26 (1440 rows, with header) |
+| REST `GET /fapi/v1/klines?symbol=&interval=1m&startTime=&limit=` (paper engine): 12-column arrays like the archive; the **last row is the forming candle** (dropped); request weight 1 for limit < 100, 2 below 500, 5 up to 1000, 10 above (header `X-MBX-USED-WEIGHT-1M`) | VERIFIED live 2026-11-27 (paper engine backfill and 1-hour smoke run, see PROGRESS) |
 | Klines CSV columns: open_time, open, high, low, close, volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore | VERIFIED live 2026-11-26 (header line, 12 columns) |
 | Archived files may be updated later | VERIFIED 2026-11-25 (README) |
 

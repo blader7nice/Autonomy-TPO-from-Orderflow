@@ -45,6 +45,24 @@ command, for example `make bootstrap DAYS=7 SYMBOLS=BTCUSDT`.
 
 The commands for later phases are added here as each phase is completed.
 
+### Paper forward test (ITERATION-5 variants, no orders)
+
+Rules and decision rules: `docs/PAPER_TEST.md`. Install, Tailscale and `.env`: `docs/DEPLOY.md`.
+
+| Command | What it does |
+|---|---|
+| `flowlevels paper-run` | Paper engine (systemd unit `flowlevels-paper`): 1m REST klines every minute → research code → SQLite ledger, Telegram alerts |
+| `flowlevels web` | Read-only dashboard on 127.0.0.1:8080 (unit `flowlevels-web`), opened through `tailscale serve` |
+| `flowlevels telegram-test` | Sends one test message with the `.env` Telegram settings |
+| `flowlevels paper-ref-run` | The one-time reference backtest of the four variants on A and B (D-046) |
+| `flowlevels paper-demo-db` + `flowlevels web --db data/paper/demo/paper/paper.sqlite --port 8090 --demo` | DEMO dashboard (window B replayed) for screenshots |
+| `PLAYWRIGHT_BROWSERS_PATH=.cache/playwright uv run python -m flowlevels.web.screens --url http://127.0.0.1:8090` | Design QA screenshots (desktop 1440 px, mobile 390 px) to `docs/screens/` |
+
+Screenshot tooling on the VPS (no root): `uv run playwright install chromium-headless-shell` with
+`PLAYWRIGHT_BROWSERS_PATH=.cache/playwright`; the missing system libraries were unpacked from
+`apt-get download` packages into `.cache/pwlibs/` and are passed with
+`LD_LIBRARY_PATH=.cache/pwlibs/usr/lib/x86_64-linux-gnu` (`.cache/` is gitignored).
+
 ## Test fixtures
 
 All files under `tests/` are synthetic tapes built by `tests/helpers.py` in the

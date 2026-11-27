@@ -191,16 +191,24 @@ class Engine:
 
     async def step(self) -> None:
         self.loops += 1
-        changed: list[str] = []
-        for s in self.symbols:
-            try:
-                if await self.feed.poll(s, self.pc.poll_limit):
-                    changed.append(s)
-            except Exception as exc:  # network etc.: the stall check alerts if it persists
-                log.warning("poll %s failed: %s", s, type(exc).__name__)
-                self.store.event("warning", "poll_error", f"{type(exc).__name__}: {exc}"[:300], s)
+        changed: set[str] = set()
+        todo = list(self.symbols)
+        for attempt in range(self.pc.poll_retries + 1):
+            if attempt:  # a stale REST snapshot: another symbol already shows a newer minute
+                await self.sleep(self.pc.poll_retry_s)
+            for s in todo:
+                try:
+                    if await self.feed.poll(s, self.pc.poll_limit):
+                        changed.add(s)
+                except Exception as exc:  # network etc.: the stall check alerts if it persists
+                    log.warning("poll %s failed: %s", s, type(exc).__name__)
+                    msg = f"{type(exc).__name__}: {exc}"[:300]
+                    self.store.event("warning", "poll_error", msg, s)
+            todo = self.feed.lagging(self.symbols)
+            if not todo:
+                break
         if changed:
-            await asyncio.to_thread(self.compute_all, changed)
+            await asyncio.to_thread(self.compute_all, [x for x in self.symbols if x in changed])
         if self.wall() - self.last_flush >= self.pc.flush_minutes * 60:
             await asyncio.to_thread(self.feed.flush)
             self.last_flush = self.wall()

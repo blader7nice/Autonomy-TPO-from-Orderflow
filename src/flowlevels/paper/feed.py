@@ -86,6 +86,7 @@ class KlineFeed:
         self.sleep = sleep
         self.page = page
         self.pace_s = pace_s
+        self.frontier = 0  # open time of the newest forming minute seen (exchange time)
         self.feeds: dict[str, SymbolFeed] = {}
 
     # ------------------------------------------------------------------ history
@@ -141,15 +142,25 @@ class KlineFeed:
         return f.append(complete_rows(allrows.unique("minute_ts").sort("minute_ts"))).height
 
     async def poll(self, symbol: str, limit: int) -> int:
-        """Latest closed minutes; falls back to a backfill when there is a gap."""
+        """Latest closed minutes; falls back to a backfill when there is a gap. The newest row
+        of a response is always dropped: it is the forming candle, or, when the REST snapshot
+        is a few seconds stale, a closed minute that may still miss its last trades."""
         f = self.feeds[symbol]
-        df = complete_rows(await self.fetch(symbol, None, limit))
+        raw = await self.fetch(symbol, None, limit)
+        if raw.height:  # exchange-time evidence: the newest (forming) minute any symbol shows
+            self.frontier = max(self.frontier, int(raw["minute_ts"][-1]))
+        df = complete_rows(raw)
         if not df.height:
             return 0
         last = f.last_ts
         if last is not None and int(df["minute_ts"][0]) > last + MIN:
             return await self.backfill(symbol)
         return f.append(df).height
+
+    def lagging(self, symbols: list[str]) -> list[str]:
+        """Symbols whose last closed minute is behind the minute before the frontier."""
+        want = self.frontier - MIN
+        return [s for s in symbols if (self.feeds[s].last_ts or 0) < want]
 
 
 def _month_start(y: int, mo: int) -> int:

@@ -668,6 +668,26 @@ def _cmd_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_telegram_test(args: argparse.Namespace) -> int:
+    """Send one test message with the .env Telegram settings (token never printed)."""
+    import asyncio
+
+    from flowlevels.paper import notify
+
+    settings, _ = _setup()
+    notify.quiet_http_logs()
+    tok = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+    tg = notify.Telegram(tok, settings.telegram_chat_id)
+    if not tg.enabled:
+        print("Telegram is not configured: set FLOWLEVELS_TELEGRAM_BOT_TOKEN and "
+              "FLOWLEVELS_TELEGRAM_CHAT_ID in .env")  # fmt: skip
+        return 1
+    url = settings.dashboard_url or "(FLOWLEVELS_DASHBOARD_URL not set)"
+    ok, err = asyncio.run(tg.send(f"<b>flowlevels</b>: Telegram test OK. Dashboard: {url}"))
+    print("sent" if ok else f"failed: {err}")
+    return 0 if ok else 1
+
+
 def _cmd_paper_demo_db(args: argparse.Namespace) -> int:
     """Build the DEMO database (window B replayed through the engine) for screenshots."""
     from pathlib import Path
@@ -794,6 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=None)
     p.add_argument("--port", type=int, default=None)
     p.add_argument("--demo", action="store_true", help="label as DEMO data (demo database)")
+    add("telegram-test", _cmd_telegram_test, "Send one Telegram test message (.env settings)")
     p = add("paper-demo-db", _cmd_paper_demo_db, "DEMO dashboard database from window B")
     p.add_argument("--out", default="data/paper/demo")
     p.add_argument(

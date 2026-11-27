@@ -369,6 +369,9 @@ paper:
     d: {n: 144, exp_r: -0.2300, exp_bps: -12.60, win_rate: 0.3542, source: "A+B in-sample, run 20261127T211931Z-paperref"}
   poll_offset_s: 3.0         # poll REST klines this many seconds after each minute
   poll_limit: 5              # klines per poll (REST weight 1)
+  poll_retries: 3            # re-polls in the same minute when another symbol already shows a newer
+                             # minute (stale REST snapshot); costs REST weight 1 each
+  poll_retry_s: 2.0          # seconds between those re-polls
   backfill_page: 1000        # klines per backfill page (REST weight 5)
   backfill_pace_s: 1.0
   flush_minutes: 15          # persist the live kline store

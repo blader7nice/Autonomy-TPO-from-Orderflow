@@ -466,6 +466,8 @@ class PaperConfig(_Strict):
     backtest: dict[str, PaperBacktestRef] = Field(default_factory=dict)
     poll_offset_s: float = Field(default=3.0, ge=0, lt=50)
     poll_limit: int = Field(default=5, ge=2, le=99)  # REST weight 1 below 100
+    poll_retries: int = Field(default=3, ge=0, le=10)
+    poll_retry_s: float = Field(default=2.0, gt=0, le=15)
     backfill_page: int = Field(default=1000, ge=100, le=1000)  # weight 5
     backfill_pace_s: float = Field(default=1.0, ge=0.2)
     flush_minutes: int = Field(default=15, ge=1)

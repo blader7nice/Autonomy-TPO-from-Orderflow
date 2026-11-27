@@ -195,6 +195,35 @@ def test_feed_drops_forming_candle_and_backfills_gap(tmp_path: Path) -> None:
     assert complete_rows(full.head(1)).height == 0
 
 
+def test_stale_snapshot_is_dropped_then_repolled(tmp_path: Path) -> None:
+    """A REST snapshot that lags the exchange (no forming row yet) loses its newest row,
+    which may be incomplete; the frontier seen on another symbol marks it as lagging."""
+    full = _klines(1, 2)
+    fresh = FakeExchange(full, T0 + 50 * MIN)
+    stale = FakeExchange(full, T0 + 49 * MIN)  # one minute behind
+    calls = {"ETHUSDT": 0}
+
+    async def fetch(symbol: str, start: int | None, limit: int) -> pl.DataFrame:
+        if symbol == "ETHUSDT":
+            calls["ETHUSDT"] += 1
+            src = stale if calls["ETHUSDT"] == 1 else fresh
+            return await src.fetch(symbol, start, limit)
+        return await fresh.fetch(symbol, start, limit)
+
+    feed = KlineFeed(tmp_path / "none", tmp_path / "live", fetch, _nosleep, page=100)
+    for s in ("BTCUSDT", "ETHUSDT"):
+        feed.load(s, T0)
+        feed.feeds[s].df = full.filter(pl.col("minute_ts") < T0 + 45 * MIN)
+    asyncio.run(feed.poll("BTCUSDT", 5))
+    asyncio.run(feed.poll("ETHUSDT", 5))
+    assert feed.frontier == T0 + 50 * MIN
+    assert feed.feeds["BTCUSDT"].last_ts == T0 + 49 * MIN
+    assert feed.feeds["ETHUSDT"].last_ts == T0 + 48 * MIN  # newest stale row dropped
+    assert feed.lagging(["BTCUSDT", "ETHUSDT"]) == ["ETHUSDT"]
+    asyncio.run(feed.poll("ETHUSDT", 5))
+    assert feed.lagging(["BTCUSDT", "ETHUSDT"]) == []
+
+
 def test_stats_ci_and_rule() -> None:
     rng = np.random.default_rng(0)
     tr = [{"symbol": "BTCUSDT" if i % 2 else "ETHUSDT", "entry_ts": T0 + i * DAY // 3,

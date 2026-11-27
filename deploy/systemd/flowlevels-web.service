@@ -1,0 +1,31 @@
+# Paper dashboard (read-only). Binds to 127.0.0.1 only; reach it through 'tailscale serve'.
+# Also runs the heartbeat watchdog (Telegram alert when the engine stops or stalls).
+[Unit]
+Description=flowlevels paper dashboard (127.0.0.1)
+Wants=network-online.target
+After=network-online.target flowlevels-paper.service
+
+[Service]
+Type=simple
+User=flow
+Group=flow
+WorkingDirectory=/home/flow/Autonomy-TPO-from-Orderflow
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/flow/Autonomy-TPO-from-Orderflow/.venv/bin/flowlevels web
+Restart=always
+RestartSec=10
+Nice=10
+MemoryHigh=300M
+MemoryMax=400M
+CPUQuota=50%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/flow/Autonomy-TPO-from-Orderflow/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

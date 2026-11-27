@@ -1,0 +1,38 @@
+# Paper forward test engine (ITERATION-5 variants a-d). No orders, no exchange keys.
+# Install: see docs/DEPLOY.md. Runs as user flow from the repo's own virtualenv.
+[Unit]
+Description=flowlevels paper forward test engine
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=flow
+Group=flow
+WorkingDirectory=/home/flow/Autonomy-TPO-from-Orderflow
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=MPLCONFIGDIR=/home/flow/Autonomy-TPO-from-Orderflow/data/paper/.mplconfig
+ExecStart=/home/flow/Autonomy-TPO-from-Orderflow/.venv/bin/flowlevels paper-run
+# SIGTERM: the engine finishes the current minute, flushes the live kline store and exits.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=always
+RestartSec=15
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# The VPS is shared with the trading bots: hard caps so the engine can never starve them.
+MemoryHigh=900M
+MemoryMax=1200M
+CPUQuota=150%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/flow/Autonomy-TPO-from-Orderflow/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
