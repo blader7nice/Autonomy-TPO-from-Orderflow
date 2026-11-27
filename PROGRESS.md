@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **MASTER-PLAN (2026-11-27): Phase A and B KILLED; C/C2 not applicable; Phase D next. Hold-out untouched (0 runs).**
+Current phase: **FINAL-KILL (2026-11-27): MASTER-PLAN finished; no candidate for the hold-out. Hold-out never loaded (0 runs). STOP.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -298,3 +298,9 @@ Current phase: **MASTER-PLAN (2026-11-27): Phase A and B KILLED; C/C2 not applic
   KILLED by rule. The filters (volume spike, extremes, EMA distance) and the final RR ≥ 3 gate
   remove almost every core signal. This matches the live log (0 BTC/ETH entries).
 - Report: `docs/research/PLAN-A-20261127T140449Z-plana-52a9cce4.md`. D-038, D-039, D-040.
+
+### Phases C / C2 — not applicable; Phase D — no candidate ❌ FINAL-KILL
+- No rule survived A or B, so the overlay (C) and combinations (C2) had no inputs. The chunked aggTrade
+  processing for window A (only needed for C) was not built. D-041.
+- `docs/research/FINAL-KILL.md`: all iterations, **61 in-sample configurations**, lessons.
+- STOP. The hold-out was never run.
