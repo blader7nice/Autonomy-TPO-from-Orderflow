@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **Pre-Phase-3 fixes done (2026-11-26): owner decisions A/B/C applied. STOP: owner reviews the v2 sanity plots/statistics and the 3 open observations before Phase 3.**
+Current phase: **Phase 3 in-sample tuning report done (2026-11-27). STOP before Phase 3b: the owner reviews the frozen config, the 36 configurations tried and the MDE. The hold-out has NOT been run (0 runs).**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -195,3 +195,61 @@ Current phase: **Pre-Phase-3 fixes done (2026-11-26): owner decisions A/B/C appl
   2. Zone ids change when a developing member (VWAP d, dPOC) moves. Touch counting needs a
      stable zone identity.
   3. The strict hole rule excludes 41% of the current 30-day window.
+
+## Pre-Phase-3 decisions 1–4 (owner, 2026-11-27) ✅
+- **1. Hole repaired (D-032).** The 2026-10-27 00:02:46–00:30:05 hole was filled from the raw
+  `trades` archive using aggTrade fill-id ranges. It is verified against the klines: the 27
+  interior minutes match exactly (volume, taker-buy, count), the flipped aggressor matches 0
+  minutes, and day totals equal the klines (BTC 102,554.645 / taker-buy 50,355.434). BTC got
+  38,304 fills and ETH 48,287. The source file and sha256 are in the completion marker
+  (`repairs`). The exclusion logic stays as the fallback for unrepairable holes. **Usable
+  sessions after the fill: 120/120 in the tuning window** (BTC 60, ETH 60), and 58/58 in the
+  old 30-day window (was 34/58).
+- Bootstrap extended to **88 days** (2026-08-31 … 11-26) = 60-day tuning window + warm-up:
+  176/176 days, 0 id gaps, 0 unrepaired holes, 13.5 min at nice 10, 2.92 GB streamed,
+  footprint 24.7 MB + OHLCV 13.6 MB. `validate-klines` over 88 days: 253,440 minutes;
+  mismatches are boundary straddles (D-023) and day edges, plus 46 unexplained ETH minutes
+  (0.018%): the two dense chains of 11-16/17 already verified fill by fill, and 13 new
+  minutes on 09-11 of the same kind (not individually verified). Reports:
+  `docs/acceptance/bootstrap-2026-11-27-88d-repair.md`, `docs/acceptance/klines-2026-11-27-88d.md`.
+- **2./3. Zones (D-034, D-035).** Static zones are fixed at the session open (ids
+  `symbol:session:anchor@price`). Dynamic levels are standalone dynamic zones, reported
+  separately, and a confluence attribute at static touches. Each bar is assigned to one zone
+  by nearest anchor.
+- **4. Execution (D-033).** OKX EEA `BTC-USD-SWAP`/`ETH-USD-SWAP` (inverse, USDC collateral;
+  the `-USDC-SWAP` names do not exist). Specs are in DATA_SOURCES. Fees 0.02%/0.05%
+  **UNCONFIRMED**; slippage 1 bucket (owner choice after the 2-tick issue), with 2/4-tick
+  sensitivities. R/bps are unaffected by the inverse contract.
+
+## Phase 3 — detectors + 60-day tuning run ✅ in-sample (2026-11-27)
+- Code: `signals.features`, `signals.detectors` (5 detectors, liquidations informational),
+  `research.{dynamic,touches,trades,stats,report,backtest}`, `make backtest`. 135 tests.
+  The selection rule was pre-registered (D-036) and committed before the first run.
+- **Run `20261127T115035Z-078b4af7`** (commit 5c3fb39, config 078b4af79f96ba73), window
+  2026-09-28 … 11-26. Report: `docs/research/REPORT-20261127T115035Z-078b4af7.md` (full run
+  dir incl. trades.parquet on the VPS under `data/research/runs/`). 3 min 44 s, **peak RSS
+  2.1 GB** (bots use ~50 MB; 2.9 GB available). One earlier dry run from the uncommitted tree
+  (`20261127T113337Z`, same config) gave identical numbers. Its peak RSS was 3.4 GB, which led
+  to slice-wise costing and categorical columns.
+- **Configurations tried: 36** (4 res × W {2,4,6} × thr {1,2,3}). Selected by the rule:
+  **5m, W = 2, threshold = 3**, i.e. all 3 of 5 detectors within 2 bars. It has **N = 41
+  treatment trades** vs 3,960 unconfirmed (pooled).
+- Static zones, exit 2R, default costs, pooled: treatment **−0.40 R** (−11.7 bps),
+  unconfirmed −0.75 R, baseline −0.97 R, random −1.29 R. **Uplift +0.35 R, 90% CI
+  [−0.007, +0.711]**, positive in 56% of 9 weeks. In-sample gate preview: 1 of 4 criteria
+  (uplift ≥ 0.15). Treatment expectancy is negative in every configuration.
+- **Cost geometry dominates**: median stop 15 bps vs ~13 bps round-trip costs, so the
+  cost is 0.57 R (treatment) to 1.3 R (random) per trade. Random gross expectancy ≈ 0, which
+  is a sound sanity result. Maker entry or OKX tick slippage improve treatment to −0.20 /
+  −0.26 R, still negative.
+- **MDE for the hold-out: 0.253 R** (SE 0.217 R over 120 sessions, scaled to 548 hold-out
+  sessions, one-sided α 0.05, power 80%). **Not adequately powered for the +0.15 R gate**,
+  because the selected config fires only ~0.34 times per session.
+- Open before Phase 3b (owner):
+  1. Review the frozen config / selection. The rule picked the smallest-N config (winner's
+     curse). Alternatives with a priori justification must be decided **before** the hold-out.
+  2. Power: MDE 0.25 R > 0.15 R gate.
+  3. Real fees for the owner's account (placeholder now).
+  4. Memory: the run holds all trades in RAM. The 9-month hold-out (~4.5× sessions) needs
+     streaming per symbol/resolution before it can run on this VPS.
+  5. Bootstrap the 9 months, check for unrepaired holes.

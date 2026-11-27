@@ -39,3 +39,6 @@
   (coin exposure until converted) and interest when a loss is borrowed against USDC collateral.
 - Confirm the owner's actual OKX EEA maker/taker rates for these swaps and replace the
   UNCONFIRMED `okx_eu_inverse` placeholder before the hold-out.
+- **Required before the hold-out run:** stream the research run (write trades per symbol and
+  resolution to parquet and aggregate lazily). The 60-day run peaks at 2.1 GB RSS; the 9-month
+  hold-out would not fit in the VPS's 3.8 GB next to the trading bots.
