@@ -248,6 +248,9 @@ def test_no_lookahead_levels(t: int) -> None:
         assert a[k] == pytest.approx(b[k], rel=1e-12), k
     assert full.atr_1h == trunc.atr_1h
     assert [z.zone_id for z in full.zones] == [z.zone_id for z in trunc.zones]
+    assert [(z.zone_id, z.low) for z in full.dynamic_zones] == [
+        (z.zone_id, z.low) for z in trunc.dynamic_zones
+    ]
 
 
 def test_atr_needs_enough_history() -> None:

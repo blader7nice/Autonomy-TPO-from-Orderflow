@@ -2,7 +2,8 @@
 
 Original spec: 2026-11-25. **Amendments of 2026-11-25** (owner decisions A/B/C and the
 risk responses) are merged into the text below and marked **[A1]**. **Amendments of
-2026-11-26** (owner decisions A/B/C after the Phase 2 sanity review) are marked **[A2]**. If anything here
+2026-11-26** (owner decisions A/B/C after the Phase 2 sanity review) are marked **[A2]**.
+**Amendments of 2026-11-27** (owner decisions 1–4 before Phase 3) are marked **[A3]**. If anything here
 conflicts with older notes, this file wins. Every change to this file goes into
 `docs/DECISIONS.md`.
 
@@ -117,11 +118,18 @@ computed incrementally. No future data is used anywhere.
   **anchored** on their strongest member (members within k × ATR of the anchor, so they
   cannot chain) and a zone is never wider than `zone_max_width_k_atr` × ATR(1h) (default
   0.5, tolerance included, D-029).
-- **[A2] Data holes:** recorded holes (D-026) are not repaired before Phase 3. Bars that
-  overlap a hole, and sessions whose level inputs overlap one, are excluded from baselines,
-  level quality checks and all research statistics, and every report states how much was
-  excluded (`flowlevels.data.quality`, D-031). Repair is required before the hold-out run
-  (BACKLOG).
+- **[A3] Data holes:** recorded holes (D-026) are **repaired** from the raw `trades`
+  archive, verified against 1m klines, and the repair is recorded with its source in the
+  data-quality metadata (D-032). A hole that cannot be repaired keeps the **[A2]** fallback:
+  bars that overlap it, and sessions whose level inputs overlap it, are excluded from
+  baselines, level checks and research statistics, and every report states how much was
+  excluded (`flowlevels.data.quality`, D-031).
+- **[A3] Zones:** static zones are built once at the session open from static levels only
+  (prior-day/-week TPO and VP levels, HVN/LVN, PDH/PDL, PWH/PWL, naked POCs) and keep their
+  id `symbol:session:anchor` for the whole session. Dynamic levels (dPOC, VWAP d/w/m and
+  bands) are not zone members: each is a standalone dynamic zone, reported separately, and
+  a static-zone touch records the dynamic levels inside it as a confluence attribute. Every
+  touch is assigned to exactly one zone, the one with the nearest anchor (D-034, D-035).
 
 ## 7. Orderflow engine
 - The base resolution is 1m. Higher resolutions are built by adding up 1m rows per price
@@ -175,6 +183,10 @@ Trade model (the same for every group):
   USD-M but trades are executed on **OKX perpetuals**, so the default fee profile is OKX's
   standard (non-VIP) futures fees; Binance fees remain an alternative profile
   (`costs.fee_profile`, D-030). Every result records the fee profile.
+  **[A3]** The execution instruments are OKX EEA `BTC-USD-SWAP` / `ETH-USD-SWAP` (inverse,
+  USDC collateral; R and bps are unaffected, D-033). Default fees 0.02%/0.05% (UNCONFIRMED
+  until the owner gives the account's rates), slippage 1 footprint bucket per side; OKX
+  2-tick and 4-tick slippage are sensitivities.
 - **[A1] Cost geometry:** report costs in R per group. Report every net result **in R and in
   bps per trade**. Add a **sensitivity run** where treatment uses the baseline (zone-edge)
   stop.

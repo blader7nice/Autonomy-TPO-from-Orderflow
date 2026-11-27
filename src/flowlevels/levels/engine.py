@@ -1,15 +1,25 @@
-"""Levels engine: all key levels and confluence zones as of time t.
+"""Levels engine: all key levels and zones as of time t.
 
 No lookahead: only 1m rows that are CLOSED at t (minute_ts + 60s <= t) are used. Prior-
-session levels use complete prior sessions only; developing levels (dPOC, VWAPs, naked-POC
-status) use closed rows of the current session.
+session levels use complete prior sessions only; developing levels (dPOC, VWAPs) use closed
+rows of the current session.
+
+Zones (D-034, owner decision 2026-11-27):
+- **Static zones** are built once at the session open (UTC 00:00) from static levels only:
+  prior-day TPO and VP levels, HVN/LVN, PDH/PDL, prior-week VP levels, PWH/PWL and the naked
+  POCs that are naked at the open. They use ATR(1h) as of the open, so zone membership,
+  edges and ids are fixed for the whole session. Zone id = symbol:session:anchor@price.
+- **Dynamic levels** (dPOC, daily/weekly/monthly VWAP and their bands) move and are never
+  static-zone members. Each one is its own standalone **dynamic zone** (level ± tolerance,
+  id symbol:session:dyn:name), reported separately. At a static-zone touch, the dynamic
+  levels inside the zone are recorded as a confluence attribute.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import polars as pl
@@ -42,13 +52,22 @@ class Zone:
     anchor: str = ""  # name of the anchoring (strongest) member
 
 
+DYNAMIC_PREFIXES = ("dPOC", "VWAP ")
+
+
+def is_dynamic(level: Level) -> bool:
+    return level.name.startswith(DYNAMIC_PREFIXES)
+
+
 @dataclass(frozen=True)
 class LevelSet:
     symbol: str
     t_ms: int
-    atr_1h: float | None
-    levels: list[Level] = field(default_factory=list)
-    zones: list[Zone] = field(default_factory=list)
+    atr_1h: float | None  # ATR(1h) as of t
+    levels: list[Level] = field(default_factory=list)  # static + dynamic levels at t
+    zones: list[Zone] = field(default_factory=list)  # static zones of the session (fixed)
+    dynamic_zones: list[Zone] = field(default_factory=list)  # one per dynamic level at t
+    atr_open: float | None = None  # ATR(1h) at the session open (static zone geometry)
 
     def level(self, name: str) -> float | None:
         for lv in self.levels:
@@ -130,22 +149,14 @@ def _profile_levels(
     return out
 
 
-def compute_levels(
-    symbol: str,
-    ohlcv_1m: pl.DataFrame,
-    fp_1m: pl.DataFrame,
-    t_ms: int,
-    sc: SymbolConfig,
-    lc: LevelsConfig,
-) -> LevelSet:
-    oh = closed_rows(ohlcv_1m, t_ms)
-    fp = closed_rows(fp_1m, t_ms)
-    day0 = anchor_ms("d", t_ms)
-    week0 = anchor_ms("w", t_ms)
+def static_levels(
+    oh: pl.DataFrame, fp: pl.DataFrame, day0: int, sc: SymbolConfig, lc: LevelsConfig
+) -> list[Level]:
+    """Static levels of the session starting at day0, from rows closed by day0 only."""
+    oh, fp = closed_rows(oh, day0), closed_rows(fp, day0)
+    week0 = anchor_ms("w", day0)
     levels: list[Level] = []
-
-    # Prior day: TPO + VP + nodes + range. Node spacing uses ATR(1h) as of the session open,
-    # so prior-day nodes are constant within the session (no nodes without that ATR).
+    # Prior day: TPO + VP + nodes + range. Node spacing uses ATR(1h) as of the session open.
     pd_oh, pd_fp = _between(oh, day0 - DAY_MS, day0), _between(fp, day0 - DAY_MS, day0)
     node_atr = atr_1h(oh, day0, lc.atr_period_1h)
     levels += _profile_levels(pd_oh, pd_fp, sc, lc, "d", tpo=True, node_atr=node_atr)
@@ -154,7 +165,6 @@ def compute_levels(
             Level("PDH", "PDH", _f(pd_oh["high"].max())),
             Level("PDL", "PDL", _f(pd_oh["low"].min())),
         ]
-
     # Prior week: VP + range.
     pw_oh, pw_fp = _between(oh, week0 - 7 * DAY_MS, week0), _between(fp, week0 - 7 * DAY_MS, week0)
     levels += _profile_levels(pw_oh, pw_fp, sc, lc, "w", tpo=False, node_atr=None)
@@ -163,17 +173,8 @@ def compute_levels(
             Level("PWH", "PWH", _f(pw_oh["high"].max())),
             Level("PWL", "PWL", _f(pw_oh["low"].min())),
         ]
-
-    # Developing TPO POC of the current session.
-    today = oh.filter(pl.col("minute_ts") >= day0)
-    dva = value_area(
-        tpo_profile(today, lc.tpo_period_minutes, sc.tpo_tick, sc.exchange_tick),
-        lc.value_area_pct,
-    )
-    if dva:
-        levels.append(Level("dPOC", "dPOC", dva.poc))
-
-    # Naked TPO POCs from sessions day-2 .. day-lookback, untouched since their session end.
+    # Naked TPO POCs of sessions day-2 .. day-lookback, untouched between their session end
+    # and the session open (membership is fixed for the session).
     for k in range(2, lc.naked_poc_lookback_days + 1):
         start = day0 - k * DAY_MS
         sess = _between(oh, start, start + DAY_MS)
@@ -188,17 +189,93 @@ def compute_levels(
         if not touched:
             d = dt.datetime.fromtimestamp(start / 1000, tz=dt.UTC).date().isoformat()
             levels.append(Level(f"nPOC {d}", "nPOC", va.poc))
+    return levels
 
-    # Anchored VWAPs with bands.
+
+def dynamic_levels(oh: pl.DataFrame, t_ms: int, sc: SymbolConfig, lc: LevelsConfig) -> list[Level]:
+    """Developing TPO POC and anchored VWAPs with bands, from rows closed by t."""
+    oh = closed_rows(oh, t_ms)
+    day0 = anchor_ms("d", t_ms)
+    levels: list[Level] = []
+    today = oh.filter(pl.col("minute_ts") >= day0)
+    dva = value_area(
+        tpo_profile(today, lc.tpo_period_minutes, sc.tpo_tick, sc.exchange_tick),
+        lc.value_area_pct,
+    )
+    if dva:
+        levels.append(Level("dPOC", "dPOC", dva.poc))
     for kind in ("d", "w", "m"):
         acc = anchored_vwap(oh, kind, t_ms)
         for suf, price in acc.bands().items():
             name = f"VWAP {kind}{' ' + suf if suf else ''}"
             levels.append(Level(name, name, price))
+    return levels
 
+
+def session_label(day0: int) -> str:
+    return dt.datetime.fromtimestamp(day0 / 1000, tz=dt.UTC).date().isoformat()
+
+
+def session_zones(
+    symbol: str, day0: int, levels: list[Level], atr: float, sc: SymbolConfig, lc: LevelsConfig
+) -> list[Zone]:
+    """Static zones of one session with stable ids symbol:session:anchor@price."""
+    sess = session_label(day0)
+    return [
+        replace(z, zone_id=f"{symbol}:{sess}:{z.anchor}@{_anchor_price(z):.10g}")
+        for z in confluence(symbol, [lv for lv in levels if not is_dynamic(lv)], atr, sc, lc)
+    ]
+
+
+def _anchor_price(z: Zone) -> float:
+    return next(m.price for m in z.members if m.name == z.anchor)
+
+
+def dynamic_zones(
+    symbol: str, day0: int, levels: list[Level], atr: float, lc: LevelsConfig
+) -> list[Zone]:
+    """One standalone zone per dynamic level: level +- tolerance, id symbol:session:dyn:name."""
+    tol = lc.zone_tolerance_k_atr * atr
+    sess = session_label(day0)
+    return [
+        Zone(
+            zone_id=f"{symbol}:{sess}:dyn:{lv.name}",
+            label=lv.name,
+            score=lc.weight(lv.type),
+            price=lv.price,
+            low=lv.price - tol,
+            high=lv.price + tol,
+            members=(lv,),
+            anchor=lv.name,
+        )
+        for lv in levels
+        if is_dynamic(lv)
+    ]
+
+
+def compute_levels(
+    symbol: str,
+    ohlcv_1m: pl.DataFrame,
+    fp_1m: pl.DataFrame,
+    t_ms: int,
+    sc: SymbolConfig,
+    lc: LevelsConfig,
+) -> LevelSet:
+    oh = closed_rows(ohlcv_1m, t_ms)
+    fp = closed_rows(fp_1m, t_ms)
+    day0 = anchor_ms("d", t_ms)
+    stat = static_levels(oh, fp, day0, sc, lc)
+    dyn = dynamic_levels(oh, t_ms, sc, lc)
+    atr_open = atr_1h(oh, day0, lc.atr_period_1h)
     atr = atr_1h(oh, t_ms, lc.atr_period_1h)
-    zones = confluence(symbol, levels, atr, sc, lc) if atr else []
-    return LevelSet(symbol, t_ms, atr, levels, zones)
+    zones = session_zones(symbol, day0, stat, atr_open, sc, lc) if atr_open else []
+    dzones = dynamic_zones(symbol, day0, dyn, atr_open, lc) if atr_open else []
+    return LevelSet(symbol, t_ms, atr, stat + dyn, zones, dzones, atr_open)
+
+
+def dynamic_confluence(zone: Zone, dyn: list[Level]) -> list[str]:
+    """Names of the dynamic levels inside a static zone (within tolerance of its members)."""
+    return [lv.name for lv in dyn if zone.low <= lv.price <= zone.high]
 
 
 def confluence(
