@@ -104,6 +104,53 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
     return _run(go())
 
 
+def holdout_days_in(cfg: AppConfig, days: list[dt.date]) -> list[dt.date]:
+    """Days of `days` inside the hold-out window (must be empty for any aggTrade run)."""
+    return [d for d in days if cfg.plan.holdout_start <= d <= cfg.plan.holdout_end]
+
+
+def _cmd_bootstrap_range(args: argparse.Namespace) -> int:
+    """ITERATION-4: aggTrades -> 1m footprint for an explicit date range, month by month,
+    streamed in batches (bounded memory), raw deleted per day. Refuses hold-out days."""
+    from flowlevels.data.bootstrap import render_bootstrap_md, run_days, write_report
+    from flowlevels.data.storage import ParquetStore
+
+    settings, cfg = _setup()
+    start, end = dt.date.fromisoformat(args.start), dt.date.fromisoformat(args.end)
+    days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    bad = holdout_days_in(cfg, days)
+    if bad:
+        print(f"REFUSED: {len(bad)} day(s) inside the hold-out ({bad[0]} .. {bad[-1]})")
+        return 2
+    i4 = cfg.iteration4
+
+    async def go() -> int:
+        adapter = _adapter(settings)
+        try:
+            rep = await run_days(
+                adapter,
+                ParquetStore(settings.data_dir),
+                cfg,
+                args.symbols,
+                days,
+                settings.data_dir / "tmp_raw",
+                chunk_rows=args.chunk_rows or i4.chunk_rows,
+                max_disk_pct=i4.max_disk_pct,
+                by_month=True,
+            )
+        finally:
+            await adapter.aclose()
+        md = render_bootstrap_md(rep)
+        md += f"\nPeak RSS {rep['peak_rss_gb']} GB; stopped: {rep['stopped'] or 'no'}.\n"
+        p = write_report(rep, md, settings.data_dir / "reports", f"bootstrap-range-{start}-{end}")
+        print(md[-3000:])
+        print(f"Report: {p}")
+        errs = [r for r in rep["days_report"] if r["status"] in ("error", "missing")]
+        return 1 if errs or rep["stopped"] else 0
+
+    return _run(go())
+
+
 def _cmd_validate_klines(args: argparse.Namespace) -> int:
     from flowlevels.data.bootstrap import render_klines_md, validate_klines, write_report
     from flowlevels.data.pipeline import last_complete_days
@@ -451,6 +498,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
     p.add_argument("--keep-raw", action="store_true")
     p.add_argument("--force", action="store_true", help="Reprocess completed days")
+    p = add("bootstrap-range", _cmd_bootstrap_range, "aggTrades -> footprint for a date range")
+    p.add_argument("--start", required=True)
+    p.add_argument("--end", required=True)
+    p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p.add_argument("--chunk-rows", type=int, default=0)
     p = add("validate-klines", _cmd_validate_klines, "Compare rebuilt 1m OHLCV with klines")
     p.add_argument("--days", type=int, default=30)
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])

@@ -86,6 +86,44 @@ def find_time_holes(
     return out
 
 
+class _StreamStats:
+    """Per-day checks computed batch by batch: trade count, first/last id, trades outside
+    the day (error) and time holes (same result as `find_time_holes` on the whole day)."""
+
+    def __init__(self, start: int, end: int, max_silence_s: float) -> None:
+        self.start, self.end = start, end
+        self.limit = int(max_silence_s * 1000)
+        self.n = 0
+        self.first_id: int | None = None
+        self.last_id: int | None = None
+        self.prev_ts = start - 1
+        self._holes: list[dict[str, Any]] = []
+
+    def see(self, name: str, day: dt.date, trades: pl.DataFrame) -> pl.DataFrame:
+        if trades.height == 0:
+            return trades
+        outside = trades.filter((pl.col("ts_ms") < self.start) | (pl.col("ts_ms") >= self.end))
+        if outside.height:
+            raise ValueError(f"{name}: {outside.height} trades outside {day} (UTC)")
+        self.n += trades.height
+        if self.first_id is None:
+            self.first_id = int(trades["trade_id"][0])
+        self.last_id = int(trades["trade_id"][-1])
+        self._scan(trades["ts_ms"].cast(pl.Int64))
+        return trades
+
+    def _scan(self, ts: pl.Series) -> None:
+        pts = pl.concat([pl.Series([self.prev_ts], dtype=pl.Int64), ts])
+        for i in (pts.diff() > self.limit).arg_true().to_list():
+            a, b = int(pts[i - 1]), int(pts[i])
+            self._holes.append({"after_ms": a, "before_ms": b, "seconds": round((b - a) / 1000, 3)})
+        self.prev_ts = int(ts[-1])
+
+    def holes(self) -> list[dict[str, Any]]:
+        self._scan(pl.Series([self.end], dtype=pl.Int64))
+        return self._holes
+
+
 async def process_day(
     adapter: VenueAdapter,
     store: ParquetStore,
@@ -95,7 +133,11 @@ async def process_day(
     raw_dir: Path,
     keep_raw: bool = False,
     force: bool = False,
+    chunk_rows: int | None = None,
 ) -> DayReport:
+    """One day. With `chunk_rows` the archive is streamed in batches (bounded memory, the
+    same Ingestor code path and identical output); only a day with a time hole is re-read
+    in full for the repair step, which needs the fill-id ranges of all trades."""
     t0 = time.perf_counter()
     fp = fingerprint(cfg, symbol)
     done = store.completion("ohlcv_1m", symbol, day)
@@ -113,23 +155,30 @@ async def process_day(
         return DayReport(symbol, day.isoformat(), "missing", error=str(exc))
     raw_bytes = path.stat().st_size
     t_dl = time.perf_counter() - t0
-    agg = adapter.read_trades_file(path, keep_fill_ids=True)
-    trades = agg.select(list(TRADE_SCHEMA))
     start = day_start_ms(day)
-    outside = trades.filter((pl.col("ts_ms") < start) | (pl.col("ts_ms") >= start + 86_400_000))
-    if outside.height:
-        raise ValueError(f"{path.name}: {outside.height} trades outside {day} (UTC)")
-
+    end = start + 86_400_000
     sink = MemorySink()
     ing = Ingestor(cfg, [symbol], [sink])
-    await ing.run(ReplaySource.from_frames(symbol, [trades]))
+    stats = _StreamStats(start, end, cfg.data_quality.max_trade_silence_s)
+    agg: pl.DataFrame | None = None
+    if chunk_rows:
+        frames = (stats.see(path.name, day, f) for f in adapter.iter_trades_file(path, chunk_rows))
+        await ing.run(ReplaySource.from_frames(symbol, frames))
+    else:
+        agg = adapter.read_trades_file(path, keep_fill_ids=True)
+        trades = stats.see(path.name, day, agg.select(list(TRADE_SCHEMA)))
+        await ing.run(ReplaySource.from_frames(symbol, [trades]))
     fp_df, ohlcv_df = sink.footprint_df(symbol), sink.ohlcv_df(symbol)
     gaps = [g.to_dict() for g in ing.trackers[symbol].gaps]
-    holes = find_time_holes(trades, start, start + 86_400_000, cfg.data_quality.max_trade_silence_s)
+    holes = stats.holes()
     repairs: list[dict[str, Any]] = []
+    if holes and cfg.data_quality.repair_holes_from_trades and agg is None:
+        agg = adapter.read_trades_file(path, keep_fill_ids=True)  # rare: hole days only
     if holes:
         log.warning("%s %s: %d time hole(s) without trades: %s", symbol, day, len(holes), holes)
     if holes and cfg.data_quality.repair_holes_from_trades:
+        assert agg is not None
+        trades = agg.select(list(TRADE_SCHEMA))
         fix = await repair_day_holes(adapter, symbol, day, agg, holes, raw_dir, keep_raw)
         if fix.fills.height:
             # The fills go through their own Ingestor: same code path, own id namespace.
@@ -162,9 +211,9 @@ async def process_day(
         symbol=symbol,
         day=day.isoformat(),
         status="done",
-        n_trades=trades.height,
-        first_id=int(trades["trade_id"][0]) if trades.height else None,
-        last_id=int(trades["trade_id"][-1]) if trades.height else None,
+        n_trades=stats.n,
+        first_id=stats.first_id,
+        last_id=stats.last_id,
         gaps=gaps,
         holes=holes,
         repairs=repairs,

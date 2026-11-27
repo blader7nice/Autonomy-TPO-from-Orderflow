@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import resource
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -28,26 +30,44 @@ async def run_days(
     raw_dir: Path,
     keep_raw: bool = False,
     force: bool = False,
+    chunk_rows: int | None = None,
+    max_disk_pct: float | None = None,
+    by_month: bool = False,
 ) -> dict[str, Any]:
+    """Process (symbol, day) pairs. by_month: month by month (all symbols of a month before
+    the next month). max_disk_pct: stop before a day if the data disk is fuller than that."""
     t0 = time.perf_counter()
     reports: list[DayReport] = []
-    for symbol in symbols:
-        for day in days:
-            try:
-                rep = await process_day(adapter, store, cfg, symbol, day, raw_dir, keep_raw, force)
-            except Exception as exc:  # report and continue with the next day
-                log.exception("failed %s %s", symbol, day)
-                rep = DayReport(symbol, day.isoformat(), "error", error=repr(exc))
-            log.info(
-                "%s %s %s trades=%d gaps=%d %.1fs",
-                symbol,
-                day,
-                rep.status,
-                rep.n_trades,
-                len(rep.gaps),
-                rep.seconds,
+    pairs = [(s, d) for s in symbols for d in days]
+    if by_month:
+        pairs.sort(key=lambda p: (p[1].year, p[1].month, symbols.index(p[0]), p[1]))
+    stopped = ""
+    for symbol, day in pairs:
+        if max_disk_pct is not None:
+            store.data_dir.mkdir(parents=True, exist_ok=True)
+            du = shutil.disk_usage(store.data_dir)
+            pct = 100 * du.used / du.total
+            if pct > max_disk_pct:
+                stopped = f"disk {pct:.1f} % > {max_disk_pct} % before {symbol} {day}"
+                log.error("stopping: %s", stopped)
+                break
+        try:
+            rep = await process_day(
+                adapter, store, cfg, symbol, day, raw_dir, keep_raw, force, chunk_rows
             )
-            reports.append(rep)
+        except Exception as exc:  # report and continue with the next day
+            log.exception("failed %s %s", symbol, day)
+            rep = DayReport(symbol, day.isoformat(), "error", error=repr(exc))
+        log.info(
+            "%s %s %s trades=%d gaps=%d %.1fs",
+            symbol,
+            day,
+            rep.status,
+            rep.n_trades,
+            len(rep.gaps),
+            rep.seconds,
+        )
+        reports.append(rep)
     return {
         "kind": "bootstrap",
         "created_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
@@ -62,6 +82,8 @@ async def run_days(
             "raw": dir_size_bytes(raw_dir),
         },
         "days_report": [r.to_dict() for r in reports],
+        "stopped": stopped,
+        "peak_rss_gb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, 2),
         "cross_day_gaps": cross_day_gaps(reports),
     }
 

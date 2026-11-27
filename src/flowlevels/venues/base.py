@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -36,6 +36,11 @@ class VenueAdapter(Protocol):
         """Parse a downloaded trades file into TRADE_SCHEMA, sorted by trade_id.
 
         keep_fill_ids adds `first_fill_id`/`last_fill_id` (the raw fill-id range)."""
+        ...
+
+    def iter_trades_file(self, path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:
+        """The same trades as `read_trades_file`, streamed in batches of <= chunk_rows rows
+        in trade_id order (bounded memory for large days)."""
         ...
 
     async def download_raw_trades_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:

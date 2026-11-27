@@ -11,13 +11,14 @@ import asyncio
 import datetime as dt
 import hashlib
 import io
+import itertools
 import json
 import logging
 import random
 import re
 import time
 import zipfile
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,33 @@ def _read_single_csv_from_zip(path: Path) -> bytes:
         if len(names) != 1:
             raise ValueError(f"{path}: expected exactly one CSV, found {names}")
         return zf.read(names[0])
+
+
+def iter_aggtrades_zip(path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:
+    """Stream an aggTrades zip in batches of <= chunk_rows CSV lines (decompressed on the
+    fly, never fully in memory). Each batch is parsed like `parse_aggtrades_csv`; the header
+    (first line only) is detected per batch. Batches must continue the trade_id order."""
+    with zipfile.ZipFile(path) as zf:
+        names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+        if len(names) != 1:
+            raise ValueError(f"{path}: expected exactly one CSV, found {names}")
+        last_id: int | None = None
+        with zf.open(names[0]) as f:
+            while True:
+                lines = list(itertools.islice(f, chunk_rows))
+                if not lines:
+                    break
+                lines = [ln for ln in lines if ln.strip()]
+                if not lines:
+                    continue
+                df = parse_aggtrades_csv(b"".join(lines))
+                del lines
+                if df.height == 0:
+                    continue
+                if last_id is not None and int(df["trade_id"][0]) <= last_id:
+                    raise ValueError(f"{path.name}: trade ids not increasing across batches")
+                last_id = int(df["trade_id"][-1])
+                yield df
 
 
 def _has_header(data: bytes) -> bool:
@@ -425,6 +453,9 @@ class BinanceUSDM:
 
     def read_trades_file(self, path: Path, keep_fill_ids: bool = False) -> pl.DataFrame:
         return parse_aggtrades_csv(_read_single_csv_from_zip(path), keep_fill_ids)
+
+    def iter_trades_file(self, path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:
+        return iter_aggtrades_zip(path, chunk_rows)
 
     async def download_raw_trades_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
         return await self._download_verified(raw_trades_daily_path(symbol, day), dest_dir)
