@@ -204,7 +204,7 @@ class Engine:
                     log.warning("poll %s failed: %s", s, type(exc).__name__)
                     msg = f"{type(exc).__name__}: {exc}"[:300]
                     self.store.event("warning", "poll_error", msg, s)
-            todo = self.feed.lagging(self.symbols)
+            todo = self.feed.lagging(self.symbols, int(self.wall() * 1000) // MIN * MIN)
             if not todo:
                 break
         if changed:

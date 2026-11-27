@@ -222,6 +222,8 @@ def test_stale_snapshot_is_dropped_then_repolled(tmp_path: Path) -> None:
     assert feed.lagging(["BTCUSDT", "ETHUSDT"]) == ["ETHUSDT"]
     asyncio.run(feed.poll("ETHUSDT", 5))
     assert feed.lagging(["BTCUSDT", "ETHUSDT"]) == []
+    # stale for every symbol at once: only the (ops) clock shows it
+    assert feed.lagging(["BTCUSDT", "ETHUSDT"], T0 + 51 * MIN) == ["BTCUSDT", "ETHUSDT"]
 
 
 def test_stats_ci_and_rule() -> None:

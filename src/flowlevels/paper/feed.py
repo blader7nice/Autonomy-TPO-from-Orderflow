@@ -157,9 +157,11 @@ class KlineFeed:
             return await self.backfill(symbol)
         return f.append(df).height
 
-    def lagging(self, symbols: list[str]) -> list[str]:
-        """Symbols whose last closed minute is behind the minute before the frontier."""
-        want = self.frontier - MIN
+    def lagging(self, symbols: list[str], clock_minute: int = 0) -> list[str]:
+        """Symbols whose last closed minute is behind the minute before the frontier.
+        `clock_minute` (wall clock, ops only) catches a snapshot that is stale for every
+        symbol at once; it only decides whether to poll again, never which rows are used."""
+        want = max(self.frontier, clock_minute) - MIN
         return [s for s in symbols if (self.feeds[s].last_ts or 0) < want]
 
 
