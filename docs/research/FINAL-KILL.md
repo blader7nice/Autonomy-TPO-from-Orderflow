@@ -1,4 +1,4 @@
-# FINAL KILL — no candidate for the hold-out (MASTER-PLAN Phase D, confirmed by ITERATION-4), 2026-11-27
+# FINAL KILL — no candidate for the hold-out (MASTER-PLAN Phase D, confirmed by ITERATIONS 4 and 5), 2026-11-27
 
 **Update (ITERATION-4): KILLED — no configuration reached 60 trades on A+B.**
 
@@ -9,7 +9,8 @@ Cumulative configurations: 77.**
 Phase D rule (fixed before any run): eligible = a surviving rule or combination with net
 expectancy > 0 R on A+B, the same sign in A and B, and ≥ 60 trades. **No rule survived
 Phase A or B, so Phases C/C2 did not apply and no candidate is eligible.** The 9-month
-hold-out (2025-12-28 … 2026-09-27) was never loaded or run (0 runs).
+hold-out (2025-12-28 … 2026-09-27) was never scored or run (0 runs); its candles served only as
+indicator warm-up for window B.
 
 Costs everywhere: OKX EEA inverse perps, taker 0.05 % (UNCONFIRMED placeholder) + 1 footprint
 bucket slippage per fill, with maker-entry and OKX 2/4-tick sensitivities.
