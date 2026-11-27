@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **MASTER-PLAN (2026-11-27) in progress: Phase B done (H1, H2 KILLED); Phase A fidelity running. Hold-out untouched (0 runs).**
+Current phase: **MASTER-PLAN (2026-11-27): Phase A and B KILLED; C/C2 not applicable; Phase D next. Hold-out untouched (0 runs).**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -286,3 +286,15 @@ Current phase: **MASTER-PLAN (2026-11-27) in progress: Phase B done (H1, H2 KILL
   POC as secondary exit is worse (−0.189 R). Maker entry brings A slightly positive (+0.03 / +0.05)
   but A+B stays ≤ 0.
 - Report: `docs/research/PLAN-B-20261127T140221Z-planb-52a9cce4.md`.
+
+### Phase A — ITERATION-2 Supply Zone ❌ KILLED (strategy test; fidelity passed)
+- Fidelity (`docs/research/SZ-FIDELITY-2026-11-27.md`): all 34 log assets on Binance klines,
+  candles only. Regime agreement 97.4 %, core-signal agreement 98.96 %, logged positives
+  reproduced 131/199 (65.8 %), so the pre-registered thresholds pass. Port vs the owner's original pandas
+  code on identical frames: 100 % regime, 100 % reasons, 0 level mismatches. The gaps vs the
+  log are venue (Hyperliquid / Binance testnet vs Binance mainnet: median 5.5 bps price difference, plus volume).
+- Strategy test, run `20261127T140449Z-plana-52a9cce4` (53 s, 0.30 GB): **2 trades in 425
+  days** on BTC+ETH (A 1, B 1), both longs stopped out: A −1.097, B −1.217, A+B −1.157 R →
+  KILLED by rule. The filters (volume spike, extremes, EMA distance) and the final RR ≥ 3 gate
+  remove almost every core signal. This matches the live log (0 BTC/ETH entries).
+- Report: `docs/research/PLAN-A-20261127T140449Z-plana-52a9cce4.md`. D-038, D-039, D-040.
