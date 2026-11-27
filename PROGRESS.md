@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-4 (the pre-registered last iteration) KILLED; no candidate for the hold-out. Hold-out never loaded (0 runs). STOP.**
+Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-5 (FINAL, binding hold-out) KILLED at the in-sample gate; the hold-out was not run (0 runs). STOP.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -316,3 +316,16 @@ Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-4 (the pre-registe
   A −0.265, B +0.173). 7 of 8 configs negative. D-043.
 - Reports: `docs/research/ITER4-20261127T182244Z-iter4-0610dfbc.md`, `docs/research/TRADES-ITER4.md` (10 charts).
 - Cumulative in-sample configurations: **69**. STOP. The hold-out was never run.
+
+## ITERATION-5 (FINAL, binding hold-out, owner 2026-11-27) — revised method ❌ KILLED at the in-sample gate
+- Pre-registration `docs/research/ITERATION-5-PREREG.md` (671e0f7), before any code, download or run.
+  Rule changes chosen after seeing the ITERATION-4 charts → the hold-out was to be the binding verdict.
+  Owner decision: B's 150-day warm-up uses hold-out-span candles as indicator input only.
+- Code `strategies.method5` (T1/T2 triggers, far-edge stop, 50/50 split exit with level/trail),
+  `research.iter5`, `flowlevels iter5-run` (c18f07d). 178 tests.
+- Data/config (55923c8, D-044): klines for 6 symbols, 0 missing minutes; buckets SOL 0.03, BNB 0.11,
+  XRP 0.0004, DOGE 0.00003; OKX EEA instruments (BNB only linear); config v4.
+- Run `20261127T194620Z-iter5-da431f34`, once: all 8 configs ≥ 100 trades and negative on A+B. Selected `T2|k0.5|trail`:
+  N 218, A −0.116, B +0.127, A+B −0.079 R, 2/6 symbols positive → KILLED (D-045).
+- Reports: `docs/research/ITER5-20261127T194620Z-iter5-da431f34.md`, `docs/research/TRADES-ITER5.md` (10 charts).
+- Cumulative in-sample configurations: **77**. STOP. The hold-out was never run.

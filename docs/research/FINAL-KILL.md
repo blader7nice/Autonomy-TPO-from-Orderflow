@@ -1,7 +1,10 @@
 # FINAL KILL — no candidate for the hold-out (MASTER-PLAN Phase D, confirmed by ITERATION-4), 2026-11-27
 
-**Update (ITERATION-4, the pre-registered last iteration): KILLED — no configuration reached 60
-trades on A+B. FINAL-KILL stands; no further iterations. Cumulative configurations: 69.**
+**Update (ITERATION-4): KILLED — no configuration reached 60 trades on A+B.**
+
+**Update (ITERATION-5, FINAL, binding hold-out, opened by the owner): KILLED at the in-sample
+gate — all 8 configurations negative on A+B. FINAL-KILL stands; the hold-out was not run.
+Cumulative configurations: 77.**
 
 Phase D rule (fixed before any run): eligible = a surviving rule or combination with net
 expectancy > 0 R on A+B, the same sign in A and B, and ≥ 60 trades. **No rule survived
@@ -21,8 +24,9 @@ bucket slippage per fill, with maker-entry and OKX 2/4-tick sensitivities.
 | Phase B H1 | Dalton 80 % rule | A + B | 4 | k0.5/none: N 246, A −0.033, B −0.506, A+B −0.085 R | KILLED |
 | Phase B H2 | Dalton balance fade | A + B | 8 | k0.5/none/r1.5: N 300, A −0.045, B −0.368, A+B −0.098 R | KILLED |
 | ITERATION-4 (FINAL) | TrejdingHub method replica: 4H bias → fresh POI (prior-day/week TPO, H1/M30 zones) → 15m liquidity sweep → candle (c1) / + M30 CVD (c2) confirmation → structural target ≥ minRR | A + B | 8 | max N 40 (b1/c1/rr2): A −0.265, B +0.173, A+B −0.232 R; 7 of 8 negative | KILLED (no config ≥ 60 trades) |
+| ITERATION-5 (FINAL) | revised method: 4H + daily EMA50 bias at entry, ITERATION-4 POIs, T1 sweep (range ≥ 1.5 ATR15) or T2 30m zone + engulfing/pin, stop at POI far edge + k ATR, 50 % TP1 (≥ 1 R) + 50 % TP2 or ATR trail, 48 h; 6 symbols | A + B | 8 | T2/k0.5/trail: N 218, A −0.116, B +0.127, A+B −0.079 R, 2/6 symbols > 0; all 8 negative | KILLED (gate) |
 
-**Cumulative configurations tried in the in-sample windows: 69** (36 + 12 + 1 + 12 + 8). The
+**Cumulative configurations tried in the in-sample windows: 77** (36 + 12 + 1 + 12 + 8 + 8). The
 superseded ITERATION-2 confirmation grid (6) was never run and is not counted.
 
 ## What was learned
@@ -52,6 +56,15 @@ superseded ITERATION-2 confirmation grid (6) was never run and is not counted.
    configuration. Those trades lose (27 % wins at a 2.6 R median target, −0.23 R net); costs are
    ~0.27 R per trade. The M30 orderflow filter (c2) cuts N to 1–9 and cannot be judged.
    Report: `docs/research/ITER4-20261127T182244Z-iter4-0610dfbc.md`; charts: `docs/research/TRADES-ITER4.md`.
+
+7. **Wider, structure-anchored stops and a trend filter did not create an edge.** ITERATION-5
+   moved the stop behind the POI's far edge (median 114 bps, 1.18 × ATR(1h); costs fell to
+   0.14 R per trade), required the 4H and daily EMA50 on the trade's side, split the exit, and
+   added the trader's own trigger (30m zone touch + engulfing / pin bar). On six symbols this
+   gives 144–330 trades per configuration, all net negative on A+B (−0.08 … −0.42 R). The candle
+   trigger (T2) beats the sweep trigger (T1) by 0.12–0.25 R but is itself ≤ 0; only SOL and XRP
+   are slightly positive. Report: `docs/research/ITER5-20261127T194620Z-iter5-da431f34.md`; charts:
+   `docs/research/TRADES-ITER5.md`.
 
 ## What remains usable
 

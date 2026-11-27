@@ -341,7 +341,7 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
             ax.annotate(lab, (xx, xpx), xytext=(8, 5), ha="left", textcoords="offset points",
                         fontsize=8, color=INK)  # fmt: skip
     ax.axvline(xe - 0.5, color=C_ENTRY, lw=0.8, alpha=0.6)
-    every = 16 if step == m4.M15 else 8
+    every = 16
     ticks = np.arange(0, len(x), every)
     ax.set_xticks(ticks)
     ax.set_xticklabels([_utc(int(bb.ts[i])) for i in ticks], fontsize=8, color=INK2)
