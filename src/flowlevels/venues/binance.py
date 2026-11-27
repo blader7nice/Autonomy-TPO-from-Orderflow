@@ -91,6 +91,11 @@ def klines_1m_daily_path(symbol: str, day: dt.date) -> str:
     return f"data/futures/um/daily/klines/{symbol}/1m/{symbol}-1m-{day.isoformat()}.zip"
 
 
+def klines_1m_monthly_path(symbol: str, year: int, month: int) -> str:
+    """Monthly 1m klines archive (same CSV format as the daily files)."""
+    return f"data/futures/um/monthly/klines/{symbol}/1m/{symbol}-1m-{year:04d}-{month:02d}.zip"
+
+
 def parse_checksum_file(text: str) -> str:
     m = _SHA256_RE.search(text)
     if not m:
@@ -429,6 +434,11 @@ class BinanceUSDM:
 
     async def download_klines_1m_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
         return await self._download_verified(klines_1m_daily_path(symbol, day), dest_dir)
+
+    async def download_klines_1m_month(
+        self, symbol: str, year: int, month: int, dest_dir: Path
+    ) -> Path:
+        return await self._download_verified(klines_1m_monthly_path(symbol, year, month), dest_dir)
 
     def read_klines_file(self, path: Path) -> pl.DataFrame:
         return parse_klines_csv(_read_single_csv_from_zip(path))

@@ -50,6 +50,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # Markdown report rendering: long table rows and short group-frame names (T, U, ...).
 "src/flowlevels/research/report.py" = ["E501", "N806"]
 "src/flowlevels/research/iteration1_report.py" = ["E501", "N806"]
+"src/flowlevels/research/plan.py" = ["E501", "N806"]
+"src/flowlevels/strategies/*.py" = ["E501"]
+"tests/test_dalton.py" = ["E501"]
+"tests/test_supply_zone.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

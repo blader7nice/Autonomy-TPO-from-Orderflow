@@ -317,6 +317,120 @@ def _cmd_iteration1(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_klines_fill(args: argparse.Namespace) -> int:
+    from flowlevels.data import klines
+
+    settings, _ = _setup()
+    start, end = dt.date.fromisoformat(args.start), dt.date.fromisoformat(args.end)
+
+    async def go() -> int:
+        adapter = _adapter(settings)
+        try:
+            for s in args.symbols:
+                root = settings.data_dir / "klines"
+                paths = await klines.fill_range(adapter, root, s, start, end)
+                print(f"{s}: {len(paths)} month files")
+        finally:
+            await adapter.aclose()
+        return 0
+
+    return _run(go())
+
+
+def _cmd_sz_fidelity(args: argparse.Namespace) -> int:
+    """Replay every logged Supply Zone scan with the port (candles only)."""
+    from pathlib import Path
+
+    import numpy as np
+    import polars as pl
+
+    from flowlevels.strategies import sz_fidelity as fid
+
+    settings, cfg = _setup()
+    out = settings.data_dir / "research/fidelity"
+    out.mkdir(parents=True, exist_ok=True)
+    rows = fid.read_log(Path(args.log))
+    df = fid.replay(rows, settings.data_dir / "klines", cfg.supply_zone)
+    df.write_parquet(out / "replay.parquet")
+    m = fid.metrics(df)
+    (out / "metrics.json").write_text(json.dumps(m, indent=2, default=str))
+    print(json.dumps(m, indent=2, default=str))
+    if args.dump_sample:
+        # reference sample: every scan where log or port reached the core signal + random others
+        d = df.filter(pl.col("p_reason") != "no_klines")
+        interesting = d.filter(
+            (~pl.col("p_reason").is_in(list(fid.NON_CORE_PORT)))
+            | (~pl.col("reason").is_in(["no_strategy_signal", "consolidation_regime"]))
+        )
+        rest = d.join(interesting.select("symbol", "ts"), on=["symbol", "ts"], how="anti")
+        rng = np.random.default_rng(cfg.research.seed)
+        pick = rng.choice(rest.height, size=min(args.dump_sample, rest.height), replace=False)
+        sample = pl.concat([interesting, rest[np.sort(pick)]]).select("symbol", "ts").unique()
+        fid.dump_frames(
+            list(sample.iter_rows()), settings.data_dir / "klines", cfg.supply_zone,
+            out / "ref_frames.npz",
+        )  # fmt: skip
+        print(f"reference frames: {sample.height} scans -> {out / 'ref_frames.npz'}")
+    return 0
+
+
+def _cmd_sz_refcheck(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from flowlevels.strategies import sz_fidelity as fid
+
+    _, cfg = _setup()
+    r = fid.refcheck(Path(args.frames), Path(args.ref), cfg.supply_zone)
+    Path(args.out).write_text(json.dumps(r, indent=2, default=str))
+    print(json.dumps({k: v for k, v in r.items() if k != "diffs"}, indent=2))
+    for x in r["diffs"][:15]:
+        print(x)
+    return 0
+
+
+def _cmd_plan_run(args: argparse.Namespace) -> int:
+    """MASTER-PLAN phase A (Supply Zone) or B (Dalton) on windows A and B (candles only)."""
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.research import plan
+
+    settings, cfg = _setup()
+    root = settings.data_dir / "klines"
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-plan{args.phase}-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    if args.phase == "a":
+        tr, meta = plan.sz_trades(cfg, root)
+        md, summary = plan.phase_a_report(tr, meta, cfg)
+    else:
+        tr, meta = plan.dalton_trades(cfg, root)
+        md, summary = plan.phase_b_report(tr, meta, cfg)
+    head = (
+        f"# MASTER-PLAN phase {args.phase.upper()} — run `{run_id}`\n\nCommit `{git_commit()}`, "
+        f"config `{config_hash(cfg)}`. Windows A {cfg.plan.a_start} … {cfg.plan.a_end}, B "
+        f"{cfg.plan.b_start} … {cfg.plan.b_end}; hold-out {cfg.plan.holdout_start} … "
+        f"{cfg.plan.holdout_end} not used. Costs `{cfg.costs.fee_profile}` + "
+        f"`{cfg.costs.slippage}`."
+        "\n\n"
+    )
+    md = head + md
+    if tr.height:
+        tr.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    (out / "meta.json").write_text(
+        json.dumps(meta | {"summary": summary, "commit": git_commit()}, indent=2, default=str)
+    )
+    (out / "REPORT.md").write_text(md)
+    Path(args.copy_to).mkdir(parents=True, exist_ok=True)
+    (Path(args.copy_to) / f"PLAN-{args.phase.upper()}-{run_id}.md").write_text(md)
+    print(md)
+    print(f"Run dir: {out}")
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -340,6 +454,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("validate-klines", _cmd_validate_klines, "Compare rebuilt 1m OHLCV with klines")
     p.add_argument("--days", type=int, default=30)
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p = add("klines-fill", _cmd_klines_fill, "Store 1m klines (candles only) for a date range")
+    p.add_argument("--symbols", nargs="+", required=True)
+    p.add_argument("--start", required=True)
+    p.add_argument("--end", required=True)
+    p = add("sz-fidelity", _cmd_sz_fidelity, "Replay the Supply Zone live log (candles only)")
+    p.add_argument("--log", required=True)
+    p.add_argument("--dump-sample", type=int, default=0)
+    p = add("sz-refcheck", _cmd_sz_refcheck, "Port vs original pandas code on identical frames")
+    p.add_argument("--frames", required=True)
+    p.add_argument("--ref", required=True)
+    p.add_argument("--out", required=True)
+    p = add("plan-run", _cmd_plan_run, "MASTER-PLAN phase a (Supply Zone) or b (Dalton)")
+    p.add_argument("--phase", choices=["a", "b"], required=True)
+    p.add_argument("--copy-to", default="docs/research")
     p = add("live", _cmd_live, "Run the live collector (network)")
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
     p.add_argument("--duration", type=float, default=0, help="Seconds; 0 = forever")

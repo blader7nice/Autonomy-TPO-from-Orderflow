@@ -160,3 +160,78 @@ iteration1:
   min_zone_score: 1.0           # frozen in-sample median (2026-11-27, zones only; D-037)
   min_treatment_trades: 100
   secondary_exits: [2R, 3R]
+
+# ---- Owner's Supply Zone bot (docs/strategies/SUPPLY_ZONE_SPEC.md). Values = live code.
+supply_zone:
+  n_1h: 300
+  n_4h: 150
+  min_1h: 100
+  min_4h: 50
+  scan_delay_s: 180            # emulated scan at HH:03 (median live delay, A1)
+  regime_ema_fast: 20
+  regime_ema_slow: 50
+  regime_slope_bars: 10
+  regime_slope_threshold: 0.05 # BTC/ETH
+  regime_threshold_default: 0.1  # code default for instruments not in the bot's dict
+  regime_thresholds: {BTC: 0.05, ETH: 0.05, SOL: 0.05, BNB: 0.05, XRP: 0.05, ADA: 0.05,
+    DOT: 0.05, LINK: 0.05, LTC: 0.08, ATOM: 0.08, NEAR: 0.08, UNI: 0.08, AAVE: 0.08,
+    ARB: 0.08, OP: 0.08, INJ: 0.08, SUI: 0.08, SEI: 0.08, ZEC: 0.08, ETC: 0.08, BCH: 0.08,
+    FIL: 0.08, WLD: 0.08, RUNE: 0.08}
+  recalc_interval: 50
+  zone_lookback: 50
+  zone_body_atr: 1.2
+  zone_tolerance_pct: 0.5
+  vp_lookback_bars: 100
+  vp_bins: 50
+  vp_poc_tolerance_pct: 1.5
+  fvg_min_gap_pct: 0.1
+  fvg_max_age_bars: 50
+  fvg_fill_threshold_pct: 80.0
+  rsi_period: 14
+  rsi_short_min: 55.0
+  rsi_long_max: 45.0
+  atr_period: 14
+  min_rr: 1.5
+  atr_sl_mult: 1.5
+  atr_tp_mult: 3.0
+  long_tp_factor: 2.0          # core LONG target = top + 2 x atr_tp_mult x ATR (asymmetric)
+  volume_spike_lookback: 20
+  volume_spike_multiplier: 1.5
+  local_extreme_lookback: 20
+  local_extreme_max_age: 3
+  multiday_extreme_lookback: 100
+  ema_distance_period: 20
+  ema_distance_atr_multiplier: 3.0
+  sl_atr_period: 14
+  swing_lookback: 20
+  sl_zone_buffer_atr: 0.3
+  sl_swing_buffer_atr: 0.2
+  tp2_atr_mult: 1.5
+  partial_tp_min_rr: 1.5
+  min_rr_required: 3.0
+  tp1_size: 0.33
+  chandelier_lookback: 10
+  chandelier_atr_mult: 2.5
+  cooldown_hours: 48
+
+# ---- ITERATION-2 (DECISIONS "ITERATION-2", pre-registered 2026-11-27).
+iteration2:
+  resolution: 5m
+  grid_score_threshold: [1.0, 2.0, 3.0]
+  grid_window_bars: [2, 3]
+  min_confirmed_trades: 30
+  min_total_trades: 30
+  gate_expectancy_r: 0.0
+  gate_uplift_r: 0.15
+
+# ---- MASTER-PLAN windows (DECISIONS "MASTER-PLAN", 2026-11-27). The hold-out is never loaded.
+plan:
+  a_start: 2024-12-28
+  a_end: 2025-12-27
+  holdout_start: 2025-12-28
+  holdout_end: 2026-09-27
+  b_start: 2026-09-28
+  b_end: 2026-11-26
+  warmup_days: 40
+  min_trades: 60
+  sensitivities: [default, maker_entry, slip_okx_2tick, slip_okx_4tick]

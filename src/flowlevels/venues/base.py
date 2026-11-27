@@ -48,6 +48,10 @@ class VenueAdapter(Protocol):
 
     async def download_klines_1m_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path: ...
 
+    async def download_klines_1m_month(
+        self, symbol: str, year: int, month: int, dest_dir: Path
+    ) -> Path: ...
+
     def read_klines_file(self, path: Path) -> pl.DataFrame: ...
 
     # --- REST backfill --------------------------------------------------------------

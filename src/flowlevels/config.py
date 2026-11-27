@@ -6,6 +6,7 @@ matter) and must be recorded in every result/report together with the git commit
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import subprocess
@@ -278,6 +279,95 @@ class Iteration1Config(_Strict):
     secondary_exits: list[str] = Field(default_factory=lambda: ["2R", "3R"])
 
 
+class SupplyZoneConfig(_Strict):
+    """Owner's Supply Zone bot (docs/strategies/SUPPLY_ZONE_SPEC.md); values = live code."""
+
+    # bot frames and scan
+    n_1h: int = 300
+    n_4h: int = 150
+    min_1h: int = 100
+    min_4h: int = 50
+    scan_delay_s: int = 180
+    # regime (4h)
+    regime_ema_fast: int = 20
+    regime_ema_slow: int = 50
+    regime_slope_bars: int = 10
+    regime_slope_threshold: float = 0.05
+    regime_thresholds: dict[str, float] = Field(default_factory=dict)  # by base asset
+    regime_threshold_default: float = 0.1
+    # core strategy
+    recalc_interval: int = 50
+    zone_lookback: int = 50
+    zone_body_atr: float = 1.2
+    zone_tolerance_pct: float = 0.5
+    vp_lookback_bars: int = 100
+    vp_bins: int = 50
+    vp_poc_tolerance_pct: float = 1.5
+    fvg_min_gap_pct: float = 0.1
+    fvg_max_age_bars: int = 50
+    fvg_fill_threshold_pct: float = 80.0
+    rsi_period: int = 14
+    rsi_short_min: float = 55.0
+    rsi_long_max: float = 45.0
+    atr_period: int = 14
+    min_rr: float = 1.5
+    atr_sl_mult: float = 1.5
+    atr_tp_mult: float = 3.0
+    long_tp_factor: float = 2.0
+    # entry filters
+    volume_spike_lookback: int = 20
+    volume_spike_multiplier: float = 1.5
+    local_extreme_lookback: int = 20
+    local_extreme_max_age: int = 3
+    multiday_extreme_lookback: int = 100
+    ema_distance_period: int = 20
+    ema_distance_atr_multiplier: float = 3.0
+    # engine SL/TP
+    sl_atr_period: int = 14
+    swing_lookback: int = 20
+    sl_zone_buffer_atr: float = 0.3
+    sl_swing_buffer_atr: float = 0.2
+    tp2_atr_mult: float = 1.5
+    partial_tp_min_rr: float = 1.5
+    min_rr_required: float = 3.0
+    tp1_size: float = 0.33
+    # management
+    chandelier_lookback: int = 10
+    chandelier_atr_mult: float = 2.5
+    cooldown_hours: int = 48
+
+    def threshold(self, base: str) -> float:
+        return self.regime_thresholds.get(base, self.regime_threshold_default)
+
+
+class Iteration2Config(_Strict):
+    """ITERATION-2 (DECISIONS): Supply Zone trades + orderflow confirmation near entry."""
+
+    resolution: str = "5m"
+    grid_score_threshold: list[float] = Field(default_factory=lambda: [1.0, 2.0, 3.0])
+    grid_window_bars: list[int] = Field(default_factory=lambda: [2, 3])
+    min_confirmed_trades: int = 30
+    min_total_trades: int = 30
+    gate_expectancy_r: float = 0.0
+    gate_uplift_r: float = 0.15
+
+
+class PlanConfig(_Strict):
+    """MASTER-PLAN windows (DECISIONS). Dates inclusive, UTC days."""
+
+    a_start: dt.date = dt.date(2024, 12, 28)
+    a_end: dt.date = dt.date(2025, 12, 27)
+    holdout_start: dt.date = dt.date(2025, 12, 28)
+    holdout_end: dt.date = dt.date(2026, 9, 27)
+    b_start: dt.date = dt.date(2026, 9, 28)
+    b_end: dt.date = dt.date(2026, 11, 26)
+    warmup_days: int = 40
+    min_trades: int = 60
+    sensitivities: list[str] = Field(
+        default_factory=lambda: ["default", "maker_entry", "slip_okx_2tick", "slip_okx_4tick"]
+    )
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -291,6 +381,9 @@ class AppConfig(_Strict):
     trade_model: TradeModelConfig = TradeModelConfig()
     research: ResearchConfig = ResearchConfig()
     iteration1: Iteration1Config = Iteration1Config()
+    supply_zone: SupplyZoneConfig = SupplyZoneConfig()
+    iteration2: Iteration2Config = Iteration2Config()
+    plan: PlanConfig = PlanConfig()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:
