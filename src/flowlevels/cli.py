@@ -601,6 +601,50 @@ def _cmd_paper_ref_run(args: argparse.Namespace) -> int:
     return 0 if ok is not False else 1
 
 
+def _cmd_paper_run(args: argparse.Namespace) -> int:
+    """Live paper engine (DECISIONS PAPER-PLAN). Runs until SIGTERM/SIGINT."""
+    import signal
+    from pathlib import Path
+
+    from flowlevels.paper import notify
+    from flowlevels.paper.engine import Engine
+    from flowlevels.paper.store import Store
+
+    settings, cfg = _setup()
+    notify.quiet_http_logs()
+    db = Path(args.db) if args.db else settings.data_dir / "paper" / "paper.sqlite"
+    store = Store(db)
+    tok = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+    tg = notify.Telegram(tok, settings.telegram_chat_id)
+
+    async def main() -> None:
+        adapter = _adapter(settings)
+        eng = Engine(cfg, store, adapter.fetch_klines_1m, tg, settings.data_dir,
+                     settings.dashboard_url)  # fmt: skip
+        loop = asyncio.get_running_loop()
+        stop = asyncio.Event()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        try:
+            await eng.start()
+            runner = asyncio.create_task(eng.run_forever(args.max_loops))
+            waiter = asyncio.create_task(stop.wait())
+            done, _ = await asyncio.wait({runner, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            for t in (runner, waiter):
+                if t not in done:
+                    t.cancel()
+            if runner in done and runner.exception() is not None:
+                raise runner.exception()  # type: ignore[misc]
+        finally:
+            await eng.shutdown()
+            await adapter.aclose()
+            await tg.aclose()
+
+    asyncio.run(main())
+    store.close()
+    return 0
+
+
 def _cmd_iter5_run(args: argparse.Namespace) -> int:
     """ITERATION-5 (FINAL) on windows A and B: grid, gate, report, example charts.
     Never touches the hold-out (window loader guards); the hold-out run is a separate step."""
@@ -708,6 +752,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p = add("iter4-run", _cmd_iter4_run, "ITERATION-4 (FINAL) grid, report and example charts")
     p.add_argument("--copy-to", default="docs/research")
+    p = add("paper-run", _cmd_paper_run, "Live paper engine (no orders): klines -> rules -> ledger")
+    p.add_argument("--db", default=None, help="SQLite path (default data/paper/paper.sqlite)")
+    p.add_argument("--max-loops", type=int, default=None, help="stop after N minutes (tests)")
     p = add("paper-ref-run", _cmd_paper_ref_run, "Paper variants reference backtest on A and B")
     p.add_argument("--copy-to", default="docs/research")
     p.add_argument(

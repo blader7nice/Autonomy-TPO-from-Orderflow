@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # API (Phase 4/6). Bind to localhost by default; never expose unauthenticated.
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8080, ge=1, le=65535)
+    # Public (tailnet) URL of the dashboard, used for links in Telegram messages.
+    dashboard_url: str | None = None
 
     @field_validator("binance_ws_url")
     @classmethod

@@ -299,6 +299,17 @@ def parse_rest_aggtrades(payload: list[dict[str, Any]]) -> pl.DataFrame:
     return validate_trades(df)
 
 
+def parse_rest_klines(payload: Any) -> pl.DataFrame:
+    """REST kline rows [open_time, open, high, low, close, volume, close_time, ...]."""
+    if not isinstance(payload, list):
+        raise ValueError(f"Unexpected klines response: {str(payload)[:200]}")
+    schema = {"minute_ts": pl.Int64, "open": pl.Float64, "high": pl.Float64,
+              "low": pl.Float64, "close": pl.Float64, "volume": pl.Float64}  # fmt: skip
+    rows = [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+            for r in payload]  # fmt: skip
+    return pl.DataFrame(rows, schema=schema, orient="row")
+
+
 def parse_ws_message(raw: str | bytes) -> Batch | None:
     """Parse a combined-stream frame {"stream":..., "data":{...}} or a raw payload."""
     msg = json.loads(raw)
@@ -486,6 +497,18 @@ class BinanceUSDM:
         if not isinstance(payload, list):
             raise ValueError(f"Unexpected aggTrades response: {str(payload)[:200]}")
         return parse_rest_aggtrades(payload)
+
+    async def fetch_klines_1m(
+        self, symbol: str, start_ms: int | None = None, limit: int = 5
+    ) -> pl.DataFrame:
+        """REST `/fapi/v1/klines` 1m, oldest first, *including* the forming candle when the
+        range reaches the present (tested live 2026-11-27, DECISIONS PAPER-PLAN). Weight 1 for
+        limit < 100, 2 below 500, 5 up to 1000."""
+        params: dict[str, Any] = {"symbol": symbol, "interval": "1m", "limit": limit}
+        if start_ms is not None:
+            params["startTime"] = start_ms
+        resp = await self._get(f"{self.rest_url}/fapi/v1/klines", params=params)
+        return parse_rest_klines(resp.json())
 
     # ------------------------------------------------------------------ live
     def live_url(self, symbols: list[str], liquidations: bool = True) -> str:
