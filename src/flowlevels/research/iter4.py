@@ -332,10 +332,13 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
     marks = [(int(t["sweep_ts"]), "sweep"), (int(t["closeback_ts"]), "close-back")]
     if marks[0][0] == marks[1][0]:
         marks = [(marks[0][0], "sweep + close-back")]
+    else:  # adjacent bars: one label, both bars shaded
+        marks = [(marks[0][0], "sweep, then close-back"), (marks[1][0], "")]
     for ts_k, lab in marks:
         ax.axvspan(xp(ts_k) - 0.45, xp(ts_k) + 0.45, color=C_HI, alpha=0.35, zorder=1)
-        ax.annotate(lab, (xp(ts_k), float(t["extreme"])), xytext=(0, -14 if t["direction"] > 0 else 8),
-                    textcoords="offset points", ha="center", fontsize=8, color=INK)  # fmt: skip
+        if lab:
+            ax.annotate(lab, (xp(ts_k), float(t["extreme"])), xytext=(-8, -14 if t["direction"] > 0 else 8),
+                        textcoords="offset points", ha="right", fontsize=8, color=INK)  # fmt: skip
     x_end = float(x[-1]) + 0.5
     xe = xp(int(t["entry_ts"]))
     for y, col, lab, ls in (
@@ -345,6 +348,7 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
         x0 = xe if lab != "15m swing" else 0
         ax.hlines(y, x0, x_end, colors=col, lw=1.6 if ls == "-" else 1.2, linestyles=ls, zorder=4)  # type: ignore[arg-type]
         ax.text(x_end + 0.3, y, f"{lab} {y:,.2f}", va="center", fontsize=8, color=INK)
+    poi_txt: list[str] = []
     for p in str(t["pois"]).split(";"):
         kind, rest = p.split(":")
         near, far = (float(v) for v in rest.split("/"))
@@ -352,7 +356,9 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
             ax.hlines(near, 0, x_end, colors=C_POI, lw=1.2, linestyles="--", zorder=4)
         else:
             ax.axhspan(min(near, far), max(near, far), color=C_POI, alpha=0.15, zorder=0)
-        ax.text(0.3, near, f"POI {kind}", va="bottom", fontsize=8, color=INK)
+        poi_txt.append(f"{kind} {near:,.2f}" + ("" if near == far else f"–{far:,.2f}"))
+    ax.text(0.01, 0.02, "POI (orange): " + "; ".join(poi_txt), transform=ax.transAxes, fontsize=8,
+            color=INK, va="bottom", bbox={"facecolor": "white", "alpha": 0.8, "lw": 0})  # fmt: skip
     if t["bias"] == "b1":
         ema = pl.Series(b4.c).ewm_mean(span=i4.ema_period, adjust=False).to_numpy()
         ct = b4.ts + m4.H4  # EMA value is known at the 4H close
@@ -368,7 +374,7 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
                 ax.plot(xp(tj) + 7.5, yv, marker="v" if hi[j] else "^", ms=8, color=C_EMA, zorder=5)
     xx = xp(int(t["exit_ts"]) // m4.M15 * m4.M15)
     ax.plot(xx, t["exit_px"], marker="X", ms=10, color=INK, zorder=6)
-    ax.annotate(f"exit ({t['exit_kind']})", (xx, t["exit_px"]), xytext=(0, -14), ha="center",
+    ax.annotate(f"exit ({t['exit_kind']})", (xx, t["exit_px"]), xytext=(9, 6), ha="left",
                 textcoords="offset points", fontsize=8, color=INK)  # fmt: skip
     ax.axvline(xe - 0.5, color=C_ENTRY, lw=0.8, alpha=0.6)
     ticks = np.arange(0, len(x), 16)

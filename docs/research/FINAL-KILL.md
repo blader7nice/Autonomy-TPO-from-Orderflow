@@ -1,4 +1,7 @@
-# FINAL KILL — no candidate for the hold-out (MASTER-PLAN Phase D), 2026-11-27
+# FINAL KILL — no candidate for the hold-out (MASTER-PLAN Phase D, confirmed by ITERATION-4), 2026-11-27
+
+**Update (ITERATION-4, the pre-registered last iteration): KILLED — no configuration reached 60
+trades on A+B. FINAL-KILL stands; no further iterations. Cumulative configurations: 69.**
 
 Phase D rule (fixed before any run): eligible = a surviving rule or combination with net
 expectancy > 0 R on A+B, the same sign in A and B, and ≥ 60 trades. **No rule survived
@@ -17,8 +20,9 @@ bucket slippage per fill, with maker-entry and OKX 2/4-tick sensitivities.
 | Phase A (ITERATION-2) | owner's Supply Zone bot, faithful port | A + B | 1 | 2 trades in 425 days, A+B −1.157 R | KILLED |
 | Phase B H1 | Dalton 80 % rule | A + B | 4 | k0.5/none: N 246, A −0.033, B −0.506, A+B −0.085 R | KILLED |
 | Phase B H2 | Dalton balance fade | A + B | 8 | k0.5/none/r1.5: N 300, A −0.045, B −0.368, A+B −0.098 R | KILLED |
+| ITERATION-4 (FINAL) | TrejdingHub method replica: 4H bias → fresh POI (prior-day/week TPO, H1/M30 zones) → 15m liquidity sweep → candle (c1) / + M30 CVD (c2) confirmation → structural target ≥ minRR | A + B | 8 | max N 40 (b1/c1/rr2): A −0.265, B +0.173, A+B −0.232 R; 7 of 8 negative | KILLED (no config ≥ 60 trades) |
 
-**Cumulative configurations tried in the in-sample windows: 61** (36 + 12 + 1 + 12). The
+**Cumulative configurations tried in the in-sample windows: 69** (36 + 12 + 1 + 12 + 8). The
 superseded ITERATION-2 confirmation grid (6) was never run and is not counted.
 
 ## What was learned
@@ -41,6 +45,13 @@ superseded ITERATION-2 confirmation grid (6) was never run and is not counted.
 5. **Fees are still a placeholder.** All verdicts use taker 0.05 %. The maker-entry rows show
    that the conclusion is sensitive to execution cost but does not flip on A+B for any rule.
    A re-test with confirmed lower fees would be a new, pre-registered iteration.
+
+6. **The full sequential method is too selective and still negative.** 4H bias, a first test of
+   a fresh POI, a sweep of the 15m swing and a close back produce ~2,550 setups on 425 days
+   (BTC+ETH), but the bias and the "nearest structural target ≥ 2R" rule leave ≤ 40 trades per
+   configuration. Those trades lose (27 % wins at a 2.6 R median target, −0.23 R net); costs are
+   ~0.27 R per trade. The M30 orderflow filter (c2) cuts N to 1–9 and cannot be judged.
+   Report: ; charts: .
 
 ## What remains usable
 

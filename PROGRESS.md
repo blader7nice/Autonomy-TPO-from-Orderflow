@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **FINAL-KILL (2026-11-27): MASTER-PLAN finished; no candidate for the hold-out. Hold-out never loaded (0 runs). STOP.**
+Current phase: **FINAL-KILL confirmed (2026-11-27): ITERATION-4 (the pre-registered last iteration) KILLED; no candidate for the hold-out. Hold-out never loaded (0 runs). STOP.**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -304,3 +304,15 @@ Current phase: **FINAL-KILL (2026-11-27): MASTER-PLAN finished; no candidate for
   processing for window A (only needed for C) was not built. D-041.
 - `docs/research/FINAL-KILL.md`: all iterations, **61 in-sample configurations**, lessons.
 - STOP. The hold-out was never run.
+
+## ITERATION-4 (FINAL, owner 2026-11-27) — "TrejdingHub method replica" ❌ KILLED → FINAL-KILL stands
+- Pre-registration `docs/research/ITERATION-4-PREREG.md` (dfe4b4d), committed before any code or run.
+- Chunked aggTrade processing (7b5ed67): streamed zip line batches into the same Ingestor,
+  month order, disk guard, hold-out refusal. Window-A footprint built: 770 symbol-days, 0 missing
+  (D-042; one inconsistent raw-trades repair archive on the 2025-08-29 outage → hole kept
+  unrepaired; peak RSS 2.0 GB in the repair step only, over the 1.5 GB budget, logged).
+- Method code `strategies.method4`, runner `flowlevels iter4-run` (38526a7). 167 tests.
+- Run `20261127T182244Z-iter4-0610dfbc`, once: no configuration ≥ 60 trades (max 40, `b1|c1|rr2`: A+B −0.232 R,
+  A −0.265, B +0.173). 7 of 8 configs negative. D-043.
+- Reports: `docs/research/ITER4-20261127T182244Z-iter4-0610dfbc.md`, `docs/research/TRADES-ITER4.md` (10 charts).
+- Cumulative in-sample configurations: **69**. STOP. The hold-out was never run.
