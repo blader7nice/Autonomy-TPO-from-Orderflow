@@ -260,6 +260,24 @@ class ResearchConfig(_Strict):
         return self
 
 
+class Iteration1Config(_Strict):
+    """ITERATION-1 (DECISIONS): confirmation as entry timing for level-to-level trades."""
+
+    resolution: str = "5m"
+    grid_score_threshold: list[float] = Field(default_factory=lambda: [2.0, 3.0])
+    grid_window_bars: list[int] = Field(default_factory=lambda: [2, 3])
+    grid_min_stop_k_atr: list[float] = Field(default_factory=lambda: [0.5, 0.75, 1.0])
+    min_stop_cost_mult: float = Field(default=3.0, ge=0, description="x round-trip cost")
+    min_target_r: float = Field(default=1.5, gt=0, description="Target distance / stop")
+    time_stop_bars: int = Field(default=48, ge=1)
+    first_touch_only: bool = True
+    min_zone_score: float | None = Field(
+        default=None, description="Frozen in-sample median of static zone scores"
+    )
+    min_treatment_trades: int = Field(default=100, ge=1)
+    secondary_exits: list[str] = Field(default_factory=lambda: ["2R", "3R"])
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -272,6 +290,7 @@ class AppConfig(_Strict):
     context: ContextConfig = ContextConfig()
     trade_model: TradeModelConfig = TradeModelConfig()
     research: ResearchConfig = ResearchConfig()
+    iteration1: Iteration1Config = Iteration1Config()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:

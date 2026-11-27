@@ -268,6 +268,55 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_iteration1(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.data.quality import Exclusions
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.research import iteration1, iteration1_report
+    from flowlevels.research.backtest import load_symbol, tuning_days
+
+    settings, cfg = _setup()
+    store = ParquetStore(settings.data_dir)
+    if args.median_only:
+        # Zones only (no outcomes): the frozen setup-filter threshold (ITERATION-1).
+        days = tuning_days(store, args.symbols, cfg.research.tuning_days)
+        ex = Exclusions(holes=[])
+        ss = [load_symbol(store, cfg, s, days, ex).sessions for s in args.symbols]
+        n = sum(len(sz.zones) for x in ss for sz in x.values())
+        print(f"static zones: {n}, median score: {iteration1.zone_score_median(ss):g}")
+        return 0
+    if cfg.iteration1.min_zone_score is None:
+        print("iteration1.min_zone_score must be frozen in the config first (--median-only)")
+        return 2
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-it1-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    trades, meta = iteration1.run(store, cfg, args.symbols)
+    meta |= {
+        "run_id": run_id,
+        "kind": "iteration1",
+        "commit": git_commit(),
+        "config_hash": config_hash(cfg),
+        "created_utc": iteration1.created(),
+        "symbols": args.symbols,
+    }
+    md, summary = iteration1_report.render(trades, meta, cfg)
+    trades.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    (out / "meta.json").write_text(json.dumps(meta | {"summary": summary}, indent=2, default=str))
+    (out / "REPORT.md").write_text(md)
+    if args.copy_to:
+        Path(args.copy_to).mkdir(parents=True, exist_ok=True)
+        (Path(args.copy_to) / f"REPORT-{run_id}.md").write_text(md)
+    print(md)
+    print(f"Run dir: {out}")
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -315,6 +364,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("backtest", _cmd_backtest, "Phase 3 tuning-window run (in-sample report)")
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
     p.add_argument("--copy-to", default="docs/research", help="Also copy REPORT.md here")
+    p = add("iteration1", _cmd_iteration1, "ITERATION-1 in-sample run (pre-registered)")
+    p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p.add_argument("--copy-to", default="docs/research")
+    p.add_argument("--median-only", action="store_true", help="Print the zone-score median")
     return parser
 
 

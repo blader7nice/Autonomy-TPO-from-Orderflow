@@ -49,6 +49,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 # Markdown report rendering: long table rows and short group-frame names (T, U, ...).
 "src/flowlevels/research/report.py" = ["E501", "N806"]
+"src/flowlevels/research/iteration1_report.py" = ["E501", "N806"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -11,7 +11,7 @@ RES ?= 5m
 TODAY := $(shell date -u +%Y-%m-%d)
 
 .PHONY: help sync lint format typecheck test check verify-api bootstrap validate-klines \
-        live-smoke levels footprint sanity-plots levels-stats backtest
+        live-smoke levels footprint sanity-plots levels-stats backtest iteration1
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -63,3 +63,7 @@ levels-stats:
 # Phase 3: 60-day tuning-window run, in-sample report. Never runs the hold-out.
 backtest:
 	nice -n 10 $(RUN) flowlevels backtest --symbols $(SYMBOLS)
+
+# ITERATION-1 (DECISIONS): pre-registered level-to-level run, in-sample only.
+iteration1:
+	nice -n 10 $(RUN) flowlevels iteration1 --symbols $(SYMBOLS)

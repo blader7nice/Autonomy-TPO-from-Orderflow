@@ -128,6 +128,7 @@ def static_touches(
                     "anchor_type": anchor_type,
                     "label": z.label,
                     "n_members": len(z.members),
+                    "score": z.score,
                     "touch_n": counts[z.zone_id],
                     "direction": d,
                     "atr_open": sz.atr_open,
@@ -181,6 +182,7 @@ def dynamic_touches(
                     "anchor_type": names[zi],
                     "label": names[zi],
                     "n_members": 1,
+                    "score": 1.0,
                     "touch_n": counts[zid],
                     "direction": d,
                     "atr_open": sz.atr_open,
@@ -225,6 +227,7 @@ TOUCH_SCHEMA: dict[str, pl.DataType] = {
     "anchor_type": pl.String(),
     "label": pl.String(),
     "n_members": pl.Int64(),
+    "score": pl.Float64(),  # zone confluence score (weighted member count)
     "touch_n": pl.Int64(),
     "direction": pl.Int64(),  # +1 long (reversal up), -1 short
     "atr_open": pl.Float64(),

@@ -146,3 +146,17 @@ research:
   power: 0.80
   seed: 42
   gate_uplift_r: 0.15
+
+# ---- ITERATION-1 (DECISIONS "ITERATION-1", pre-registered 2026-11-27). Level-to-level trades.
+iteration1:
+  resolution: 5m
+  grid_score_threshold: [2.0, 3.0]
+  grid_window_bars: [2, 3]
+  grid_min_stop_k_atr: [0.5, 0.75, 1.0]
+  min_stop_cost_mult: 3.0       # minimum stop >= 3 x round-trip cost (default scenario)
+  min_target_r: 1.5             # take the trade only if target distance >= 1.5 x stop
+  time_stop_bars: 48            # 48 x 5m = 4 h
+  first_touch_only: true
+  min_zone_score: null          # set to the frozen in-sample median before the run
+  min_treatment_trades: 100
+  secondary_exits: [2R, 3R]
