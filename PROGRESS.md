@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **ITERATION-1 KILLED (2026-11-27). The orderflow-confirmation trading thesis is killed by its pre-registered criterion; hold-out not run (0 runs). STOP: owner decides next steps.**
+Current phase: **MASTER-PLAN (2026-11-27) in progress: Phase B done (H1, H2 KILLED); Phase A fidelity running. Hold-out untouched (0 runs).**
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -268,3 +268,21 @@ Current phase: **ITERATION-1 KILLED (2026-11-27). The orderflow-confirmation tra
   is no bug signal. Configurations tried in the tuning window: 48 in total.
 - Summary: `docs/research/KILL-ITERATION-1.md`; report `docs/research/REPORT-20261127T123132Z-it1-17320d07.md`.
 - Not done, by design: chunked processing, the 9-month download, the hold-out.
+
+## MASTER-PLAN (owner, 2026-11-27) — phases A → D, hold-out untouched
+- Plan logged in DECISIONS `MASTER-PLAN` (commit 7fab03b) before any run. It supersedes the
+  unrun ITERATION-2 entry (4aa0ecb, 6 configs not counted). Windows A = 2024-12-28 …
+  2025-12-27, B = 2026-09-28 … 11-26, hold-out 2025-12-28 … 2026-09-27 never loaded (guard
+  in `research.plan`). Candles = Binance USD-M 1m klines (`data/klines`, `flowlevels klines-fill`).
+- Code commit 29878f1: kline store, Supply Zone port (`strategies.supply_zone`, D-038:
+  TP1 → break-even at the next hourly tick, settled by the bot's code), fidelity tools,
+  Dalton H1/H2 (`strategies.dalton`), runners (`flowlevels plan-run`). 153 tests.
+
+### Phase B — ITERATION-3 Dalton ❌ both KILLED
+- Run `20261127T140221Z-planb-52a9cce4` (11 s, 0.36 GB). 12 configs (H1 4, H2 8); all
+  negative on A+B (−0.085 … −0.333 R). A is near zero, B clearly negative.
+- H1 selected `k0.5|none`: N 246, A −0.033, B −0.506, A+B **−0.085 R** → KILLED.
+- H2 selected `k0.5|none|r1.5`: N 300, A −0.045, B −0.368, A+B **−0.098 R** → KILLED.
+  POC as secondary exit is worse (−0.189 R). Maker entry brings A slightly positive (+0.03 / +0.05)
+  but A+B stays ≤ 0.
+- Report: `docs/research/PLAN-B-20261127T140221Z-planb-52a9cce4.md`.
