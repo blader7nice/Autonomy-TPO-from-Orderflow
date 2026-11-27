@@ -51,7 +51,7 @@ superseded ITERATION-2 confirmation grid (6) was never run and is not counted.
    (BTC+ETH), but the bias and the "nearest structural target ≥ 2R" rule leave ≤ 40 trades per
    configuration. Those trades lose (27 % wins at a 2.6 R median target, −0.23 R net); costs are
    ~0.27 R per trade. The M30 orderflow filter (c2) cuts N to 1–9 and cannot be judged.
-   Report: ; charts: .
+   Report: `docs/research/ITER4-20261127T182244Z-iter4-0610dfbc.md`; charts: `docs/research/TRADES-ITER4.md`.
 
 ## What remains usable
 
