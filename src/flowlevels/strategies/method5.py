@@ -72,6 +72,7 @@ class Trig:
     extreme: float  # T1: sweep extreme; T2: extreme of t0 .. j
     swing: float  # T1 only (nan for T2)
     pois: list[POI]
+    pattern: str = ""  # T1: 'sweep'; T2: 'engulf' | 'pin' (confirmation candle)
 
     @property
     def far(self) -> float:
@@ -128,7 +129,7 @@ def t1_setups(
         out.append(
             Trig(
                 "T1", s.direction, int(b15.ts[s.k_idx] + M15), int(b15.ts[s.c_idx]),
-                int(b15.ts[s.k_idx]), M15, s.extreme, s.swing, list(s.pois),
+                int(b15.ts[s.k_idx]), M15, s.extreme, s.swing, list(s.pois), "sweep",
             )
         )  # fmt: skip
     meta["t1"] = len(out)
@@ -181,7 +182,7 @@ def t2_setups(pois: list[POI], b30: Bars, cfg: AppConfig, meta: dict[str, Any]) 
                 ext = float(b30.l[t0 : j + 1].min()) if d > 0 else float(b30.h[t0 : j + 1].max())
                 raw.append(
                     Trig("T2", d, int(b30.ts[j] + M30), int(b30.ts[t0]), int(b30.ts[j]), M30,
-                         ext, float("nan"), [p])
+                         ext, float("nan"), [p], kind)
                 )  # fmt: skip
                 break
     out = _merge(raw)
@@ -503,7 +504,7 @@ def trades(
                     "exit_ts": exit_ts, "exit_px": exit_px, "exit_kind": f.kind,
                     "gross_r": d * (exit_px - f.entry) / r, "mfe_r": f.mfe_r, "mae_r": f.mae_r,
                     "valid": True, "a_ts": t.a_ts, "b_ts": t.b_ts, "trig_step": t.step,
-                    "extreme": t.extreme, "swing": t.swing,
+                    "extreme": t.extreme, "swing": t.swing, "pattern": t.pattern,
                     "ema4": float(ctx.ema4[k4]), "emad": float(ctx.emad[kd]), "close_d": float(bd.c[kd]),
                     "pois": ";".join(f"{p.kind}:{p.near:g}/{p.far:g}" for p in t.pois),
                     "window_end_close": bool(

@@ -331,6 +331,7 @@ class Engine:
             "b_ts": r["b_ts"],
             "trig_step": r["trig_step"],
             "extreme": r["extreme"],
+            "pattern": r.get("pattern"),
             "swing": r["swing"],
             "status": "open" if is_open else "closed",
             "tp1_hit": int(tp1_hit),

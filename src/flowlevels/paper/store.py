@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS trades (
     trig_step INTEGER,
     extreme REAL,
     swing REAL,
+    pattern TEXT,
     status TEXT NOT NULL,              -- open | closed
     tp1_hit INTEGER NOT NULL DEFAULT 0,
     x1_ts INTEGER,
@@ -168,6 +169,7 @@ TRADE_COLS = [
     "trig_step",
     "extreme",
     "swing",
+    "pattern",
     "status",
     "tp1_hit",
     "x1_ts",

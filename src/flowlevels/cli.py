@@ -645,6 +645,41 @@ def _cmd_paper_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    """Paper dashboard (read-only). Binds to FLOWLEVELS_API_HOST (127.0.0.1 by default)."""
+    from pathlib import Path
+
+    import uvicorn
+
+    from flowlevels.paper import notify
+    from flowlevels.web.app import create_app
+
+    settings, cfg = _setup()
+    notify.quiet_http_logs()
+    if settings.api_host not in ("127.0.0.1", "localhost", "::1"):
+        print("Refusing to bind the dashboard to a non-loopback address (use tailscale serve).")
+        return 2
+    db = Path(args.db) if args.db else settings.data_dir / "paper" / "paper.sqlite"
+    tok = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+    tg = None if args.demo else notify.Telegram(tok, settings.telegram_chat_id)
+    app = create_app(cfg, db, settings.data_dir, demo=args.demo, tg=tg)
+    port = args.port or settings.api_port
+    uvicorn.run(app, host=settings.api_host, port=port, log_level="warning", access_log=False)
+    return 0
+
+
+def _cmd_paper_demo_db(args: argparse.Namespace) -> int:
+    """Build the DEMO database (window B replayed through the engine) for screenshots."""
+    from pathlib import Path
+
+    from flowlevels.paper import demo
+
+    settings, cfg = _setup()
+    db = demo.build(cfg, settings.data_dir, Path(args.out), Path(args.ref_trades))
+    print(f"Demo database: {db}")
+    return 0
+
+
 def _cmd_iter5_run(args: argparse.Namespace) -> int:
     """ITERATION-5 (FINAL) on windows A and B: grid, gate, report, example charts.
     Never touches the hold-out (window loader guards); the hold-out run is a separate step."""
@@ -755,6 +790,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("paper-run", _cmd_paper_run, "Live paper engine (no orders): klines -> rules -> ledger")
     p.add_argument("--db", default=None, help="SQLite path (default data/paper/paper.sqlite)")
     p.add_argument("--max-loops", type=int, default=None, help="stop after N minutes (tests)")
+    p = add("web", _cmd_web, "Paper dashboard (read-only, 127.0.0.1 only)")
+    p.add_argument("--db", default=None)
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--demo", action="store_true", help="label as DEMO data (demo database)")
+    p = add("paper-demo-db", _cmd_paper_demo_db, "DEMO dashboard database from window B")
+    p.add_argument("--out", default="data/paper/demo")
+    p.add_argument(
+        "--ref-trades",
+        default="data/research/runs/20261127T211931Z-paperref-a086f3e1/trades.parquet",
+    )
     p = add("paper-ref-run", _cmd_paper_ref_run, "Paper variants reference backtest on A and B")
     p.add_argument("--copy-to", default="docs/research")
     p.add_argument(
