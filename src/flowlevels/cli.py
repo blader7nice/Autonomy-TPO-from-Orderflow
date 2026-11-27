@@ -544,6 +544,63 @@ def _cmd_iter4_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_paper_ref_run(args: argparse.Namespace) -> int:
+    """Paper-test reference backtest: the four paper variants on A and B (variant c is new).
+    Never touches the hold-out (window loader guards)."""
+    import resource
+    import time
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.research import iter5, paper_ref
+
+    settings, cfg = _setup()
+    t0 = time.perf_counter()
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-paperref-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    kroot = settings.data_dir / "klines"
+    tr, meta = paper_ref.ref_trades(cfg, kroot)
+    check, ok = paper_ref.consistency(tr, Path(args.iter5_trades) if args.iter5_trades else None)
+    md, summary = paper_ref.report(tr, meta, cfg, check)
+    secs = time.perf_counter() - t0
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    head = (
+        f"# Paper-test reference backtest — run `{run_id}`\n\nCommit `{git_commit()}`, config "
+        f"`{config_hash(cfg)}`. Plan: DECISIONS `PAPER-PLAN`. Windows A {cfg.plan.a_start} … "
+        f"{cfg.plan.a_end}, B {cfg.plan.b_start} … {cfg.plan.b_end}; hold-out "
+        f"{cfg.plan.holdout_start} … {cfg.plan.holdout_end} not scored (0 runs; B's warm-up uses "
+        f"hold-out-span candles as indicator input only). Costs `{cfg.costs.fee_profile}` + "
+        f"`{cfg.costs.slippage}`. Run time {secs:.0f} s, peak RSS {rss:.2f} GB. This is a "
+        "reference run for the paper test; it changes no verdict (FINAL-KILL stands).\n\n"
+    )
+    md = head + md
+    tr.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    (out / "meta.json").write_text(
+        json.dumps(
+            {"skips": meta, "summary": summary, "consistent": ok, "commit": git_commit()},
+            indent=2,
+            default=str,
+        )
+    )
+    (out / "REPORT.md").write_text(md)
+    dest = Path(args.copy_to)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / f"PAPER-REF-{run_id}.md").write_text(md)
+    ex = iter5.example_trades(tr, "T2|wick|trail", cfg, kroot, dest / "paperref")
+    (dest / "TRADES-PAPER-REF.md").write_text(
+        f"# Paper variant c `T2|wick|trail` example trades — run `{run_id}`\n\n"
+        "10 trades (3 best, 3 worst, 4 around the median net R, default costs) to check the wick "
+        "stop visually. Same chart legend as `TRADES-ITER5.md`.\n\n" + ex
+    )
+    print(md)
+    print(f"Run dir: {out}; consistent: {ok}")
+    return 0 if ok is not False else 1
+
+
 def _cmd_iter5_run(args: argparse.Namespace) -> int:
     """ITERATION-5 (FINAL) on windows A and B: grid, gate, report, example charts.
     Never touches the hold-out (window loader guards); the hold-out run is a separate step."""
@@ -651,6 +708,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p = add("iter4-run", _cmd_iter4_run, "ITERATION-4 (FINAL) grid, report and example charts")
     p.add_argument("--copy-to", default="docs/research")
+    p = add("paper-ref-run", _cmd_paper_ref_run, "Paper variants reference backtest on A and B")
+    p.add_argument("--copy-to", default="docs/research")
+    p.add_argument(
+        "--iter5-trades",
+        default="data/research/runs/20261127T194620Z-iter5-da431f34/trades.parquet",
+    )
     p = add("iter5-run", _cmd_iter5_run, "ITERATION-5 (FINAL) in-sample grid, gate, report, charts")
     p.add_argument("--copy-to", default="docs/research")
     p = add("plan-run", _cmd_plan_run, "MASTER-PLAN phase a (Supply Zone) or b (Dalton)")

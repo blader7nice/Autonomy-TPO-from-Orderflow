@@ -401,6 +401,12 @@ def example_trades(
             else ("touch bar", "confirmation bar")
         )
         tp2 = f", TP2 {t['tp2']:,.6g}" if np.isfinite(t["tp2"]) else ", no TP2"
+        sa = t.get("stop_anchor")
+        anchor = (
+            f"confirmation-candle wick {sa:,.6g}"
+            if sa is not None and np.isfinite(sa)
+            else f"far edge {t['far']:,.6g}"
+        )
         L += [
             f"### {n_ex}. {kind} — {t['symbol']} {side}, entry {_utc(t['entry_ts'], '%Y-%m-%d %H:%M')} UTC (window {t['window']})",
             "",
@@ -409,7 +415,7 @@ def example_trades(
             f"- POI(s): `{t['pois']}`; {labs[0]} {_utc(t['a_ts'])}, {labs[1]} {_utc(t['b_ts'])}, extreme {t['extreme']:,.6g}"
             + (f", 15m swing {t['swing']:,.6g}" if t["trigger"] == "T1" else ""),
             f"- bias: entry {t['entry']:,.6g} vs 4H EMA50 {t['ema4']:,.6g}; daily close {t['close_d']:,.6g} vs daily EMA50 {t['emad']:,.6g}",
-            f"- stop {t['stop']:,.6g} = far edge {t['far']:,.6g} ± {t['k']:g} × ATR(1h) {t['atr1h']:,.4g} (or the minimum distance): "
+            f"- stop {t['stop']:,.6g} = {anchor} ± {t['k']:g} × ATR(1h) {t['atr1h']:,.4g} (or the minimum distance): "
             f"{t['r_unit'] / t['entry'] * 1e4:.0f} bps; TP1 {t['tp1']:,.6g} ({t['tp1_r']:.2f} R){tp2}",
             f"- exit 1 {t['x1_px']:,.6g} at {_utc(t['x1_ts'])}, exit 2 {t['x2_px']:,.6g} at {_utc(t['x2_ts'])} "
             f"({t['exit_kind']}); gross {t['gross_r']:+.2f} R, net {t['net_r_default']:+.2f} R ({t['bps_default']:+.1f} bps)",

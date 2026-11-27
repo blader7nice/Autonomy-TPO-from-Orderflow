@@ -1,6 +1,6 @@
 # FLOWLEVELS versioned config. Bump `version` on any change that affects results.
 # The config hash (flowlevels.config.config_hash) is recorded in every report.
-version: 4
+version: 5
 
 symbols:
   BTCUSDT:
@@ -352,3 +352,29 @@ iteration5:
   time_stop_minutes: 2880      # 48 h
   min_trades: 100
   min_positive_symbols: 4
+
+# Live paper forward test (DECISIONS PAPER-PLAN, docs/PAPER_TEST.md). Rules = iteration5; each
+# variant only picks the trigger, the stop anchor and the second-half exit. A variant's version
+# hashes its rule inputs (variant, iteration5, levels, symbols, costs), not the ops fields below.
+paper:
+  variants:
+    - {id: a, trigger: T2, stop: far, k: 0.5, exit2: trail}
+    - {id: b, trigger: T2, stop: far, k: 0.5, exit2: lvl}
+    - {id: c, trigger: T2, stop: wick, k: 0.1, exit2: trail}   # wick of the 30m confirmation candle
+    - {id: d, trigger: T1, stop: far, k: 0.5, exit2: lvl}
+  poll_offset_s: 3.0         # poll REST klines this many seconds after each minute
+  poll_limit: 5              # klines per poll (REST weight 1)
+  backfill_page: 1000        # klines per backfill page (REST weight 5)
+  backfill_pace_s: 1.0
+  flush_minutes: 15          # persist the live kline store
+  chart_bars: 400            # bars per timeframe in the dashboard chart cache
+  stall_alert_minutes: 5     # alert if a symbol has no new closed minute for this long
+  heartbeat_stale_minutes: 3 # web process alerts if the engine heartbeat is older
+  disk_alert_pct: 70.0
+  summary_timezone: Europe/Warsaw
+  summary_weekday: 6         # Sunday
+  summary_time: "20:00"
+  ci_min_trades: 10          # show the 90 % CI from this many closed trades
+  freeze_trades: 30          # no rule changes before this many closed trades
+  decision_trades: 50        # real money only considered from here (owner decision)
+  ci_lower_min_r: -0.1

@@ -180,3 +180,90 @@ def test_window_loader_never_returns_holdout_minutes_for_a(tmp_path: Path) -> No
     df.write_parquet(tmp_path / "BTCUSDT" / "2025-12.parquet")
     a = iter5.load_window5(tmp_path, "BTCUSDT", CFG, "A")
     assert a.height and int(a["minute_ts"].max()) < hs
+
+
+WICK = m5.Grid("T2", 0.1, "trail", "wick")
+LIVE_GRIDS = [
+    m5.Grid("T2", 0.5, "trail"),
+    m5.Grid("T2", 0.5, "lvl"),
+    WICK,
+    m5.Grid("T1", 0.5, "lvl"),
+]
+
+
+def _loose_cfg():  # type: ignore[no-untyped-def]
+    i5 = CFG.iteration5.model_copy(update={"tp1_min_r": 0.3, "sweep_range_k_atr15": 0.5})
+    return CFG.model_copy(update={"iteration5": i5})
+
+
+def test_grid_keys_and_wick_requires_t2() -> None:
+    assert [g.key for g in LIVE_GRIDS] == [
+        "T2|k0.5|trail",
+        "T2|k0.5|lvl",
+        "T2|wick|trail",
+        "T1|k0.5|lvl",
+    ]
+    from flowlevels.config import PaperVariant
+
+    try:
+        PaperVariant(id="x", trigger="T1", stop="wick", k=0.1, exit2="lvl")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("wick stop with T1 must be rejected")
+
+
+def test_wick_stop_is_confirmation_candle_extreme_minus_buffer() -> None:
+    m = _random_klines(150, 11)
+    t0 = int(m["minute_ts"][0])
+    start, end = t0 + 110 * m4.DAY, t0 + 150 * m4.DAY
+    cfg = _loose_cfg()
+    ctx = m5.prepare(m, start, end, cfg, "BTCUSDT")
+    sig: list[dict] = []
+    rows = m5.trades(ctx, cfg, [WICK], sig)
+    assert rows, "synthetic data should give wick trades"
+    for r in rows:
+        j = int(np.searchsorted(ctx.b30.ts, r["b_ts"]))
+        d = r["direction"]
+        wick = ctx.b30.l[j] if d > 0 else ctx.b30.h[j]
+        assert r["stop_anchor"] == wick
+        raw = wick - d * 0.1 * r["atr1h"]
+        # either the raw wick stop or widened to the minimum distance, never closer
+        assert r["stop"] == raw or d * (r["entry"] - r["stop"]) > d * (r["entry"] - raw)
+        assert d * (r["entry"] - r["stop"]) >= 0.5 * r["atr1h"] - 1e-9
+    taken = [s for s in sig if s["outcome"] == "taken"]
+    assert len(taken) == len(rows)
+    assert all(s["outcome"] != "outside_window" for s in sig)
+    assert {s["config"] for s in sig} == {"T2|wick|trail"}
+
+
+def test_no_lookahead_at_arbitrary_minute_cuts() -> None:
+    """The live engine recomputes on data ending at the last closed minute (mid-bar). Every
+    trade decided before the cut must match the full-data run: closed ones exactly, open ones
+    in entry, stop and targets."""
+    m = _random_klines(150, 7)
+    t0 = int(m["minute_ts"][0])
+    start, end = t0 + 110 * m4.DAY, t0 + 150 * m4.DAY
+    cfg = _loose_cfg()
+    full, _ = m5.run_symbol(m, start, end, cfg, "BTCUSDT", LIVE_GRIDS)
+    assert len(full) > 10
+    rng = np.random.default_rng(3)
+    cuts = start + rng.integers(2 * m4.DAY // m4.MIN, (end - start) // m4.MIN, 6) * m4.MIN
+    entry_key = ("config", "entry_ts", "direction", "entry", "stop", "tp1", "tp2", "r_unit")
+    for cut in (int(c) for c in cuts):
+        part, _ = m5.run_symbol(
+            m.filter(pl.col("minute_ts") < cut), start, cut, cfg, "BTCUSDT", LIVE_GRIDS
+        )
+        exp = [r for r in full if r["entry_ts"] < cut]
+        assert [repr(tuple(r[k] for k in entry_key)) for r in part] == [
+            repr(tuple(r[k] for k in entry_key)) for r in exp
+        ], f"entries differ at cut {cut}"
+        for p, f in zip(part, exp, strict=True):
+            if not p["window_end_close"]:
+                assert (p["exit_ts"], p["exit_px"], p["exit_kind"]) == (
+                    f["exit_ts"],
+                    f["exit_px"],
+                    f["exit_kind"],
+                )
+            else:
+                assert f["exit_ts"] >= cut - m4.MIN

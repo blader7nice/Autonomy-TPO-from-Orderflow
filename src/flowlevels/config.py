@@ -424,6 +424,64 @@ class Iteration5Config(_Strict):
     min_positive_symbols: int = 4
 
 
+class PaperVariant(_Strict):
+    """One paper-test variant (docs/PAPER_TEST.md). stop 'far' = POI far edge - k x ATR(1h);
+    'wick' = the 30m confirmation candle's wick extreme - k x ATR(1h) (T2 only)."""
+
+    id: str
+    trigger: Literal["T1", "T2"]
+    stop: Literal["far", "wick"]
+    k: float = Field(ge=0)
+    exit2: Literal["lvl", "trail"]
+
+    @model_validator(mode="after")
+    def _wick_needs_t2(self) -> PaperVariant:
+        if self.stop == "wick" and self.trigger != "T2":
+            raise ValueError("the wick stop is defined for T2 only")
+        return self
+
+
+class PaperBacktestRef(_Strict):
+    """A variant's in-sample reference (A+B, default costs), shown next to its paper results."""
+
+    n: int
+    exp_r: float
+    exp_bps: float
+    win_rate: float
+    source: str
+
+
+class PaperConfig(_Strict):
+    """Live paper forward test (DECISIONS PAPER-PLAN). Rules come from `iteration5`; only the
+    variants' stop/exit choice is set here. Operational fields do not enter a version hash."""
+
+    variants: list[PaperVariant] = Field(
+        default_factory=lambda: [
+            PaperVariant(id="a", trigger="T2", stop="far", k=0.5, exit2="trail"),
+            PaperVariant(id="b", trigger="T2", stop="far", k=0.5, exit2="lvl"),
+            PaperVariant(id="c", trigger="T2", stop="wick", k=0.1, exit2="trail"),
+            PaperVariant(id="d", trigger="T1", stop="far", k=0.5, exit2="lvl"),
+        ]
+    )
+    backtest: dict[str, PaperBacktestRef] = Field(default_factory=dict)
+    poll_offset_s: float = Field(default=3.0, ge=0, lt=50)
+    poll_limit: int = Field(default=5, ge=2, le=99)  # REST weight 1 below 100
+    backfill_page: int = Field(default=1000, ge=100, le=1000)  # weight 5
+    backfill_pace_s: float = Field(default=1.0, ge=0.2)
+    flush_minutes: int = Field(default=15, ge=1)
+    chart_bars: int = Field(default=400, ge=50, le=2000)
+    stall_alert_minutes: int = Field(default=5, ge=2)
+    heartbeat_stale_minutes: int = Field(default=3, ge=1)
+    disk_alert_pct: float = Field(default=70.0, gt=0, le=100)
+    summary_timezone: str = "Europe/Warsaw"
+    summary_weekday: int = Field(default=6, ge=0, le=6)  # Monday = 0, Sunday = 6
+    summary_time: str = Field(default="20:00", pattern=r"^\d{2}:\d{2}$")
+    ci_min_trades: int = 10
+    freeze_trades: int = 30
+    decision_trades: int = 50
+    ci_lower_min_r: float = -0.1
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -442,6 +500,7 @@ class AppConfig(_Strict):
     plan: PlanConfig = PlanConfig()
     iteration4: Iteration4Config = Iteration4Config()
     iteration5: Iteration5Config = Iteration5Config()
+    paper: PaperConfig = PaperConfig()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:

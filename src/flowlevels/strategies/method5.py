@@ -326,12 +326,19 @@ def simulate_split(
 
 @dataclass(frozen=True)
 class Grid:
+    """One configuration. stop 'far': POI far edge - d x k x ATR(1h) (ITERATION-5 grid).
+    stop 'wick' (paper variant c, T2 only): the 30m confirmation candle's wick extreme
+    - d x k x ATR(1h)."""
+
     trigger: str
     k: float
     exit2: str
+    stop: str = "far"
 
     @property
     def key(self) -> str:
+        if self.stop == "wick":
+            return f"{self.trigger}|wick|{self.exit2}"
         return f"{self.trigger}|k{self.k:g}|{self.exit2}"
 
 
@@ -340,11 +347,33 @@ def grids(cfg: AppConfig) -> list[Grid]:
     return [Grid(t, k, e) for t in i5.trigger for k in i5.stop_k_atr for e in i5.second_exit]
 
 
-def run_symbol(
-    m: pl.DataFrame, start: int, end: int, cfg: AppConfig, symbol: str
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """All grid trades for one symbol with entries in [start, end). m = 1m klines incl.
-    warm-up, ending at `end` (nothing after the window is loaded)."""
+@dataclass
+class Context:
+    """Everything the trade rules need for one symbol, computed once from the 1m klines `m`
+    (warm-up included, ending at `end`): bars, bias inputs, levels, POIs and triggers."""
+
+    symbol: str
+    start: int
+    end: int
+    m: pl.DataFrame
+    b15: Bars
+    b30: Bars
+    b4: Bars
+    bd: Bars
+    bias4: np.ndarray
+    ema4: np.ndarray
+    emad: np.ndarray
+    lv: m4.Levels
+    pois: list[POI]
+    zs: list[POI]
+    trig: dict[str, list[Trig]]
+    path: Path1m
+    atr_ts: np.ndarray
+    atr: np.ndarray
+    meta: dict[str, Any]
+
+
+def prepare(m: pl.DataFrame, start: int, end: int, cfg: AppConfig, symbol: str) -> Context:
     i5 = cfg.iteration5
     tick = cfg.symbol(symbol).exchange_tick
     b15, b30, b4, bd = (m4.make_bars(m, s) for s in (M15, M30, H4, DAY))
@@ -370,54 +399,86 @@ def run_symbol(
     }
     path = Path1m(*(m[c].to_numpy() for c in ("minute_ts", "open", "high", "low", "close")))
     atr_ts, atr = hourly_atr(m, cfg.levels.atr_period_1h)
+    return Context(symbol, start, end, m, b15, b30, b4, bd, bias4, ema4, emad, lv, pois, zs,
+                   trig, path, atr_ts, atr, meta)  # fmt: skip
 
+
+def stop_anchor(ctx: Context, t: Trig, g: Grid) -> float:
+    """Price the k x ATR buffer is measured from: the far edge, or (wick) the confirmation
+    candle's wick extreme (bar j = t.b_ts on 30m)."""
+    if g.stop == "far":
+        return t.far
+    if g.stop == "wick":
+        if t.trigger != "T2":
+            raise ValueError("the wick stop is defined for T2 only")
+        j = int(np.searchsorted(ctx.b30.ts, t.b_ts))
+        return float(ctx.b30.l[j]) if t.direction > 0 else float(ctx.b30.h[j])
+    raise ValueError(f"unknown stop mode {g.stop!r}")
+
+
+def trades(
+    ctx: Context,
+    cfg: AppConfig,
+    gl: list[Grid],
+    signals: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Trades of every grid in `gl` with entries in [ctx.start, ctx.end). If `signals` is a
+    list, one row per setup inside the window is appended (taken or the skip reason)."""
+    i5 = cfg.iteration5
+    symbol, start, end = ctx.symbol, ctx.start, ctx.end
+    path, b4, bd = ctx.path, ctx.b4, ctx.bd
     rows: list[dict[str, Any]] = []
-    for g in grids(cfg):
+    for g in gl:
         skips: dict[str, int] = {}
 
-        def skip(r: str, _s: dict[str, int] = skips) -> None:
+        def skip(r: str, t: Trig, _s: dict[str, int] = skips, _g: Grid = g) -> None:
             _s[r] = _s.get(r, 0) + 1
+            if signals is not None and r != "outside_window":
+                signals.append(_signal(symbol, _g, t, r))
 
         busy_until = -1
         taken_days: set[int] = set()
-        for t in trig[g.trigger]:
+        for t in ctx.trig[g.trigger]:
             et, d = t.dec_ts, t.direction
             if not (start <= et < end):
-                skip("outside_window")
+                skip("outside_window", t)
                 continue
             i = path.index(et)
-            j = int(np.searchsorted(atr_ts, et, side="right")) - 1
+            j = int(np.searchsorted(ctx.atr_ts, et, side="right")) - 1
             k4, kd = b4.last_closed(et), bd.last_closed(et)
             if i is None or j < 0 or k4 < 0 or kd < 0:
-                skip("no_data")
+                skip("no_data", t)
                 continue
             entry = float(path.open[i])
             if not (
-                bias4[k4] == d and d * (entry - ema4[k4]) > 0 and d * (bd.c[kd] - emad[kd]) > 0
+                ctx.bias4[k4] == d
+                and d * (entry - ctx.ema4[k4]) > 0
+                and d * (bd.c[kd] - ctx.emad[kd]) > 0
             ):
-                skip("bias")
+                skip("bias", t)
                 continue
             if et // DAY in taken_days:
-                skip("daily_limit")
+                skip("daily_limit", t)
                 continue
             if et <= busy_until:
-                skip("position_open")
+                skip("position_open", t)
                 continue
-            a1h = float(atr[j])
+            a1h = float(ctx.atr[j])
             mind = max(
                 i5.min_stop_k_atr * a1h, i5.min_stop_cost_mult * round_trip_cost(cfg, symbol, entry)
             )
-            stop, r = plan_stop(entry, t.far - d * g.k * a1h, d, mind)
+            anchor = stop_anchor(ctx, t, g)
+            stop, r = plan_stop(entry, anchor - d * g.k * a1h, d, mind)
             if r <= 0:
-                skip("stop_beyond_entry")
+                skip("stop_beyond_entry", t)
                 continue
-            ahead = levels_ahead(d, entry, et, lv, zs)
+            ahead = levels_ahead(d, entry, et, ctx.lv, ctx.zs)
             if not ahead:
-                skip("no_target")
+                skip("no_target", t)
                 continue
             tp1 = ahead[0]
             if d * (tp1 - entry) < i5.tp1_min_r * r:
-                skip("tp1_below_1r")
+                skip("tp1_below_1r", t)
                 continue
             tp2 = ahead[1] if len(ahead) > 1 else None
             f = simulate_split(
@@ -428,6 +489,8 @@ def run_symbol(
             exit_ts = max(f.x1_ts, f.x2_ts)
             busy_until = exit_ts
             taken_days.add(et // DAY)
+            if signals is not None:
+                signals.append(_signal(symbol, g, t, "taken"))
             rows.append(
                 {
                     "symbol": symbol, "config": g.key, "trigger": g.trigger, "k": g.k,
@@ -441,12 +504,37 @@ def run_symbol(
                     "gross_r": d * (exit_px - f.entry) / r, "mfe_r": f.mfe_r, "mae_r": f.mae_r,
                     "valid": True, "a_ts": t.a_ts, "b_ts": t.b_ts, "trig_step": t.step,
                     "extreme": t.extreme, "swing": t.swing,
-                    "ema4": float(ema4[k4]), "emad": float(emad[kd]), "close_d": float(bd.c[kd]),
+                    "ema4": float(ctx.ema4[k4]), "emad": float(ctx.emad[kd]), "close_d": float(bd.c[kd]),
                     "pois": ";".join(f"{p.kind}:{p.near:g}/{p.far:g}" for p in t.pois),
                     "window_end_close": bool(
                         f.kind.endswith("time") and et + i5.time_stop_minutes * MIN > end
                     ),
                 }
             )  # fmt: skip
-        meta["skips"][g.key] = skips
-    return rows, meta
+            if g.stop != "far":
+                rows[-1]["stop_anchor"] = anchor
+        ctx.meta["skips"][g.key] = skips
+    return rows
+
+
+def _signal(symbol: str, g: Grid, t: Trig, outcome: str) -> dict[str, Any]:
+    return {
+        "symbol": symbol, "config": g.key, "trigger": t.trigger, "direction": t.direction,
+        "decision_ts": t.dec_ts, "a_ts": t.a_ts, "b_ts": t.b_ts, "far": t.far,
+        "pois": ";".join(f"{p.kind}:{p.near:g}/{p.far:g}" for p in t.pois), "outcome": outcome,
+    }  # fmt: skip
+
+
+def run_symbol(
+    m: pl.DataFrame,
+    start: int,
+    end: int,
+    cfg: AppConfig,
+    symbol: str,
+    gl: list[Grid] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """All grid trades for one symbol with entries in [start, end). m = 1m klines incl.
+    warm-up, ending at `end` (nothing after the window is loaded)."""
+    ctx = prepare(m, start, end, cfg, symbol)
+    rows = trades(ctx, cfg, grids(cfg) if gl is None else gl)
+    return rows, ctx.meta
