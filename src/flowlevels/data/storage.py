@@ -63,6 +63,17 @@ class ParquetStore:
             paths.append(self.write_part(dataset, symbol, day, part, sub))
         return paths
 
+    def remove_parts(self, dataset: str, symbol: str, day: dt.date, keep: str) -> list[str]:
+        """Delete every parquet part of a day partition except `keep`; returns removed names."""
+        d = self.partition(dataset, symbol, day)
+        removed = []
+        if d.exists():
+            for f in sorted(d.glob("*.parquet")):
+                if f.stem != keep:
+                    f.unlink()
+                    removed.append(f.name)
+        return removed
+
     def mark_complete(self, dataset: str, symbol: str, day: dt.date, info: dict[str, Any]) -> None:
         d = self.partition(dataset, symbol, day)
         d.mkdir(parents=True, exist_ok=True)

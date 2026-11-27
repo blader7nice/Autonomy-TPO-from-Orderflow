@@ -139,6 +139,40 @@ inclusive, contiguity, weight header), `rest_limits` (limit 1001 rejected, −41
 The signals come from Binance USD-M. The owner executes on **OKX perpetual swaps**, so the
 default cost model uses OKX fees (`configs/default.yaml` → `costs.fee_profiles`).
 
+### OKX EU execution instruments — confirmed by owner 2026-11-27
+
+The owner trades the perpetuals shown as "BTCUSD" and "ETHUSD" in the OKX EU app, with USDC
+as collateral, long and short. These are the **inverse (coin-margined) swaps** below.
+`BTC-USDC-SWAP` / `ETH-USDC-SWAP` do not exist: OKX's public instruments endpoint lists no
+USDC-settled BTC/ETH swap on www/eea/my.okx.com (checked 2026-11-27; only `USDC-USDT-SWAP`).
+
+| Field | BTC-USD-SWAP | ETH-USD-SWAP |
+|---|---|---|
+| Contract type (`ctType`) | inverse | inverse |
+| Contract value (`ctVal` × `ctMult`) | 100 USD | 10 USD |
+| Settlement currency (`settleCcy`) | BTC | ETH |
+| Tick size (`tickSz`) | 0.1 USD | 0.01 USD |
+| Lot size / min order (`lotSz` / `minSz`) | 0.1 / 0.1 contracts (10 USD) | 1 / 1 contract (10 USD) |
+| Max market order (`maxMktSz`) | 49,000 contracts | 300,000 contracts |
+| Max leverage (`lever`) | 100 | 100 |
+| State | live | live |
+
+Source: `GET https://eea.okx.com/api/v5/public/instruments?instType=SWAP&instId=<id>`
+(public, unauthenticated), retrieved 2026-11-27 from the VPS. The www.okx.com endpoint
+returns identical specs. Status: **instrument confirmed by owner**, specs VERIFIED from the
+official API. Margin in USDC is an account setting (multi-currency / portfolio margin), not
+an instrument property, so the API cannot confirm it. Fees for these instruments on the
+owner's EEA account: **UNCONFIRMED** (see below).
+
+**Effect on R/bps (D-033).** An inverse contract with USD notional Q has
+PnL_coin = Q·(1/P0 − 1/P1). Converted at the exit price P1, PnL_USD = Q·(P1 − P0)/P0,
+which is exactly the PnL of a linear contract with notional Q. Fees are charged on the USD
+contract value (paid in coin), so they are the same fraction of notional. **R and bps
+results are unaffected.** What remains is outside the per-trade model: realised PnL and fees
+are booked in BTC/ETH, not USDC, so they carry coin price exposure until converted, and a
+loss larger than the account's coin balance is borrowed against the USDC collateral
+(interest). Both are small for intraday holds and are not modelled (BACKLOG).
+
 ### OKX fees — VERIFIED 2026-11-26
 
 | Item | Value |

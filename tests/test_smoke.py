@@ -48,8 +48,11 @@ def test_costs_are_required_and_profile_must_exist() -> None:
 
 def test_default_cost_model_is_okx_with_binance_alternative() -> None:
     costs = load_config(ROOT / "configs/default.yaml").costs
-    assert costs.fee_profile == "okx_regular"
-    assert costs.fees.venue == "OKX"
+    assert costs.fee_profile == "okx_eu_inverse" and costs.slippage == "bucket1"
+    assert costs.fees.venue == "OKX EEA" and "UNCONFIRMED" in costs.fees.source
+    assert costs.slippage_scenarios["okx_4tick"].amount == 4
+    btc = costs.execution_instruments["BTCUSDT"]
+    assert (btc.inst_id, btc.contract_type, btc.tick) == ("BTC-USD-SWAP", "inverse", 0.1)
     assert (costs.maker_fee, costs.taker_fee) == (0.0002, 0.0005)
     assert costs.fee_profiles["binance_regular"].venue == "Binance"
 

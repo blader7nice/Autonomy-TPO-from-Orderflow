@@ -10,7 +10,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -95,21 +95,52 @@ class FeeProfile(_Strict):
     source: str = Field(min_length=1, description="Where the rates come from")
 
 
+class SlippageScenario(_Strict):
+    """Adverse slippage per side: `amount` x unit, where unit is the Binance footprint bucket
+    of the signal symbol or the tick of the OKX execution instrument."""
+
+    unit: Literal["bucket", "exec_tick"]
+    amount: float = Field(ge=0)
+
+
+class ExecutionInstrument(_Strict):
+    venue: str = Field(min_length=1)
+    inst_id: str = Field(min_length=1)
+    contract_type: str = Field(min_length=1, description="linear | inverse")
+    contract_value: float = Field(gt=0)
+    contract_value_ccy: str = Field(min_length=1)
+    settle_ccy: str = Field(min_length=1)
+    tick: float = Field(gt=0)
+    min_size_contracts: float = Field(gt=0)
+    status: str = Field(min_length=1)
+    as_of: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+
+
 class CostsConfig(_Strict):
     """Execution costs. Signals come from Binance USD-M; fees are those of the execution venue.
 
-    `fee_profile` selects one of `fee_profiles`; results record the profile name.
+    `fee_profile` selects one of `fee_profiles` and `slippage` one of `slippage_scenarios`;
+    results record both names. The other entries are alternatives/sensitivities.
     """
 
     fee_profile: str
     fee_profiles: dict[str, FeeProfile]
-    slippage_buckets: float = Field(default=1.0, ge=0)
+    slippage: str = "bucket1"
+    slippage_scenarios: dict[str, SlippageScenario] = Field(
+        default_factory=lambda: {"bucket1": SlippageScenario(unit="bucket", amount=1.0)}
+    )
+    execution_instruments: dict[str, ExecutionInstrument] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _known_profile(self) -> CostsConfig:
         if self.fee_profile not in self.fee_profiles:
             raise ValueError(
                 f"costs.fee_profile {self.fee_profile!r} not in {sorted(self.fee_profiles)}"
+            )
+        if self.slippage not in self.slippage_scenarios:
+            raise ValueError(
+                f"costs.slippage {self.slippage!r} not in {sorted(self.slippage_scenarios)}"
             )
         return self
 
@@ -132,6 +163,101 @@ class DataQualityConfig(_Strict):
         gt=0,
         description="A stretch without any trade longer than this is recorded as a data hole",
     )
+    repair_holes_from_trades: bool = Field(
+        default=True,
+        description="Fill holes from the raw trades archive, kline-verified (D-032)",
+    )
+
+
+class AbsorptionConfig(_Strict):
+    vol_z_min: float = Field(default=1.5, description="Robust z of bar volume")
+    delta_frac_min: float = Field(
+        default=0.15, ge=0, le=1, description="Against-direction delta / volume"
+    )
+    close_pos_min: float = Field(
+        default=0.5, ge=0, le=1, description="Close position in the bar range, reversal side"
+    )
+
+
+class ExhaustionConfig(_Strict):
+    extreme_frac_max: float = Field(
+        default=0.10, gt=0, description="Volume at the extreme bucket / bar POC volume"
+    )
+    min_buckets: int = Field(default=3, ge=2, description="Minimum ladder length")
+    close_pos_min: float = Field(default=0.5, ge=0, le=1)
+    lookback_bars: int = Field(default=3, ge=1, description="New extreme vs the last N bars")
+
+
+class DivergenceConfig(_Strict):
+    lookback_bars: int = Field(default=3, ge=1, description="New extreme vs the last N bars")
+
+
+class TrappedConfig(_Strict):
+    delta_z_min: float = Field(default=1.5, description="Robust z of the prior bar's delta")
+    close_pos_max: float = Field(
+        default=0.33, ge=0, le=1, description="Prior bar closes in this part of its range"
+    )
+
+
+class SignalsConfig(_Strict):
+    """Detectors and the confirmation score (SPEC 8). Defaults fixed before any results."""
+
+    resolutions: list[str] = Field(default_factory=lambda: ["1m", "3m", "5m", "15m"])
+    primary_resolution: str = "5m"
+    window_bars: int = Field(default=4, ge=1, description="W: bars from the touch bar")
+    score_threshold: float = Field(default=1.0, gt=0)
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "absorption": 1.0,
+            "exhaustion": 1.0,
+            "delta_divergence": 1.0,
+            "stacked_imbalance": 1.0,
+            "trapped": 1.0,
+        }
+    )
+    absorption: AbsorptionConfig = AbsorptionConfig()
+    exhaustion: ExhaustionConfig = ExhaustionConfig()
+    delta_divergence: DivergenceConfig = DivergenceConfig()
+    trapped: TrappedConfig = TrappedConfig()
+    dynamic_min_minutes: int = Field(
+        default=30, ge=0, description="A dynamic level needs this many closed anchor minutes"
+    )
+
+
+class ContextConfig(_Strict):
+    """1h regime label (2 parameters): up/down if the 1h close moved more than
+    trend_k_atr x ATR(1h) over lookback_h hours, else range."""
+
+    lookback_h: int = Field(default=24, ge=1)
+    trend_k_atr: float = Field(default=2.0, gt=0)
+
+
+class TradeModelConfig(_Strict):
+    stop_buffer_ticks: float = Field(default=2, ge=0, description="Execution-instrument ticks")
+    min_stop_k_atr: float = Field(default=0.1, ge=0, description="Minimum stop distance x ATR")
+    targets_r: list[float] = Field(default_factory=lambda: [1.0, 2.0, 3.0])
+    max_hold_minutes: int = Field(default=240, ge=1, description="Time stop for every exit")
+    primary_exit: str = "2R"
+
+
+class ResearchConfig(_Strict):
+    tuning_days: int = Field(default=60, ge=1)
+    holdout_days: int = Field(default=274, ge=1, description="About 9 months")
+    grid_window_bars: list[int] = Field(default_factory=lambda: [2, 4, 6])
+    grid_score_threshold: list[float] = Field(default_factory=lambda: [1.0, 2.0, 3.0])
+    min_n_per_group: int = Field(default=30, ge=1)
+    bootstrap_reps: int = Field(default=2000, ge=100)
+    ci_level: float = Field(default=0.90, gt=0, lt=1)
+    power: float = Field(default=0.80, gt=0, lt=1)
+    seed: int = 42
+    gate_uplift_r: float = 0.15
+
+    @model_validator(mode="after")
+    def _grid_size(self) -> ResearchConfig:
+        for name in ("grid_window_bars", "grid_score_threshold"):
+            if not 1 <= len(getattr(self, name)) <= 3:
+                raise ValueError(f"research.{name}: 1-3 values (SPEC 10)")
+        return self
 
 
 class AppConfig(_Strict):
@@ -142,6 +268,10 @@ class AppConfig(_Strict):
     levels: LevelsConfig = LevelsConfig()
     costs: CostsConfig
     data_quality: DataQualityConfig = DataQualityConfig()
+    signals: SignalsConfig = SignalsConfig()
+    context: ContextConfig = ContextConfig()
+    trade_model: TradeModelConfig = TradeModelConfig()
+    research: ResearchConfig = ResearchConfig()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:

@@ -81,6 +81,12 @@ def aggtrades_daily_path(symbol: str, day: dt.date) -> str:
     return f"data/futures/um/daily/aggTrades/{symbol}/{symbol}-aggTrades-{day.isoformat()}.zip"
 
 
+def raw_trades_daily_path(symbol: str, day: dt.date) -> str:
+    """Raw (non-aggregated) trades archive. Columns id,price,qty,quote_qty,time,is_buyer_maker
+    with a header; row count equals the kline `count` (VERIFIED 2026-11-26)."""
+    return f"data/futures/um/daily/trades/{symbol}/{symbol}-trades-{day.isoformat()}.zip"
+
+
 def klines_1m_daily_path(symbol: str, day: dt.date) -> str:
     return f"data/futures/um/daily/klines/{symbol}/1m/{symbol}-1m-{day.isoformat()}.zip"
 
@@ -117,8 +123,12 @@ def _has_header(data: bytes) -> bool:
     return False
 
 
-def parse_aggtrades_csv(data: bytes) -> pl.DataFrame:
-    """Parse a data.binance.vision USD-M aggTrades CSV (with or without header)."""
+def parse_aggtrades_csv(data: bytes, keep_fill_ids: bool = False) -> pl.DataFrame:
+    """Parse a data.binance.vision USD-M aggTrades CSV (with or without header).
+
+    With keep_fill_ids the raw fill-id range [first_fill_id, last_fill_id] is kept as two
+    extra columns (used to locate archive holes in the raw `trades` archive, D-032).
+    """
     header = _has_header(data)
     raw = pl.read_csv(
         io.BytesIO(data),
@@ -143,6 +153,49 @@ def parse_aggtrades_csv(data: bytes) -> pl.DataFrame:
             pl.col("quantity").alias("qty"),
             aggressor_expr("is_buyer_maker"),
             (pl.col("last_trade_id") - pl.col("first_trade_id") + 1).alias("fill_count"),
+            pl.col("first_trade_id").alias("first_fill_id"),
+            pl.col("last_trade_id").alias("last_fill_id"),
+        )
+        .sort("trade_id")
+    )
+    trades = validate_trades(df.select(list(TRADE_SCHEMA)).cast(TRADE_SCHEMA))  # type: ignore[arg-type]
+    if keep_fill_ids:
+        return trades.with_columns(df["first_fill_id"], df["last_fill_id"])
+    return trades
+
+
+RAW_TRADES_CSV_COLUMNS = ["id", "price", "qty", "quote_qty", "time", "is_buyer_maker"]
+
+
+def parse_raw_trades_csv(data: bytes) -> pl.DataFrame:
+    """Raw `trades` archive CSV -> TRADE_SCHEMA, one row per fill (fill_count = 1).
+
+    `trade_id` is the raw fill id, a different id namespace from aggTrade ids: use these rows
+    only for hole repair (D-032), never mixed into an aggTrade id sequence. `is_buyer_maker`
+    has the same meaning as aggTrade `m` (true => the aggressor is the SELLER).
+    """
+    raw = pl.read_csv(
+        io.BytesIO(data),
+        has_header=_has_header(data),
+        new_columns=RAW_TRADES_CSV_COLUMNS,
+        schema_overrides={
+            "id": pl.Int64,
+            "price": pl.Float64,
+            "qty": pl.Float64,
+            "quote_qty": pl.Float64,
+            "time": pl.Int64,
+            "is_buyer_maker": pl.String,
+        },
+    )
+    df = (
+        raw.with_columns(pl.col("is_buyer_maker").str.to_lowercase().eq("true"))
+        .select(
+            pl.col("time").alias("ts_ms"),
+            pl.col("id").alias("trade_id"),
+            pl.col("price"),
+            pl.col("qty"),
+            aggressor_expr("is_buyer_maker"),
+            pl.lit(1, dtype=pl.Int64).alias("fill_count"),
         )
         .sort("trade_id")
     )
@@ -365,8 +418,14 @@ class BinanceUSDM:
     async def download_trades_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
         return await self._download_verified(aggtrades_daily_path(symbol, day), dest_dir)
 
-    def read_trades_file(self, path: Path) -> pl.DataFrame:
-        return parse_aggtrades_csv(_read_single_csv_from_zip(path))
+    def read_trades_file(self, path: Path, keep_fill_ids: bool = False) -> pl.DataFrame:
+        return parse_aggtrades_csv(_read_single_csv_from_zip(path), keep_fill_ids)
+
+    async def download_raw_trades_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
+        return await self._download_verified(raw_trades_daily_path(symbol, day), dest_dir)
+
+    def read_raw_trades_file(self, path: Path) -> pl.DataFrame:
+        return parse_raw_trades_csv(_read_single_csv_from_zip(path))
 
     async def download_klines_1m_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
         return await self._download_verified(klines_1m_daily_path(symbol, day), dest_dir)

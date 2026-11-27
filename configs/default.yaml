@@ -1,6 +1,6 @@
 # FLOWLEVELS versioned config. Bump `version` on any change that affects results.
 # The config hash (flowlevels.config.config_hash) is recorded in every report.
-version: 2
+version: 3
 
 symbols:
   BTCUSDT:
@@ -47,12 +47,23 @@ data_quality:
   # aggTrade ids can be contiguous across a hole in the data (2026-10-27 00:02:46-00:30:05
   # UTC, docs/DATA_SOURCES.md), so time silences are checked as well (D-026).
   max_trade_silence_s: 60
+  # Fill holes from the raw per-fill `trades` archive, verified against 1m klines; holes that
+  # cannot be filled stay excluded (D-031). Owner decision 2026-11-27 (D-032).
+  repair_holes_from_trades: true
 
 costs:
-  # Signals come from Binance USD-M; trades are executed on OKX perpetuals (owner decision
-  # 2026-11-26, D-030). Fees are fractions of notional per side. Sources: docs/DATA_SOURCES.md.
-  fee_profile: okx_regular
+  # Signals come from Binance USD-M; trades are executed on OKX EEA inverse perpetuals
+  # BTC-USD-SWAP / ETH-USD-SWAP with USDC collateral (owner, 2026-11-27, D-033). Fees are
+  # fractions of notional per side. Sources: docs/DATA_SOURCES.md.
+  fee_profile: okx_eu_inverse
   fee_profiles:
+    okx_eu_inverse:
+      venue: OKX EEA
+      tier: Owner account, BTC-USD-SWAP / ETH-USD-SWAP
+      maker_fee: 0.0002
+      taker_fee: 0.0005
+      as_of: "2026-11-27"
+      source: UNCONFIRMED placeholder = OKX regular-tier rates until the owner gives the account's actual rates (D-033)
     okx_regular:
       venue: OKX
       tier: Regular user (non-VIP), futures/perpetual swaps
@@ -67,4 +78,71 @@ costs:
       taker_fee: 0.0005
       as_of: "2025"
       source: prior knowledge, UNVERIFIED (DATA_SOURCES.md "Binance fees")
-  slippage_buckets: 1.0
+  # Adverse slippage per side. Default 1 footprint bucket (owner, 2026-11-27): 10 USD BTC,
+  # 0.5 USD ETH. The OKX tick scenarios are optimistic sensitivities (2 ticks = 0.2 USD BTC).
+  slippage: bucket1
+  slippage_scenarios:
+    bucket1: {unit: bucket, amount: 1}
+    okx_2tick: {unit: exec_tick, amount: 2}
+    okx_4tick: {unit: exec_tick, amount: 4}
+  execution_instruments:
+    BTCUSDT:
+      venue: OKX EEA
+      inst_id: BTC-USD-SWAP
+      contract_type: inverse
+      contract_value: 100
+      contract_value_ccy: USD
+      settle_ccy: BTC
+      tick: 0.1
+      min_size_contracts: 0.1
+      status: confirmed by owner
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments (DATA_SOURCES.md)
+    ETHUSDT:
+      venue: OKX EEA
+      inst_id: ETH-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: ETH
+      tick: 0.01
+      min_size_contracts: 1
+      status: confirmed by owner
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments (DATA_SOURCES.md)
+
+# ---- Phase 3 (config v3). Defaults fixed before any outcome was seen (D-035).
+signals:
+  resolutions: [1m, 3m, 5m, 15m]
+  primary_resolution: 5m
+  window_bars: 4
+  score_threshold: 1.0
+  weights: {absorption: 1.0, exhaustion: 1.0, delta_divergence: 1.0, stacked_imbalance: 1.0, trapped: 1.0}
+  absorption: {vol_z_min: 1.5, delta_frac_min: 0.15, close_pos_min: 0.5}
+  exhaustion: {extreme_frac_max: 0.10, min_buckets: 3, close_pos_min: 0.5, lookback_bars: 3}
+  delta_divergence: {lookback_bars: 3}
+  trapped: {delta_z_min: 1.5, close_pos_max: 0.33}
+  dynamic_min_minutes: 30
+
+context:
+  lookback_h: 24
+  trend_k_atr: 2.0
+
+trade_model:
+  stop_buffer_ticks: 2
+  min_stop_k_atr: 0.1
+  targets_r: [1.0, 2.0, 3.0]
+  max_hold_minutes: 240
+  primary_exit: 2R
+
+research:
+  tuning_days: 60
+  holdout_days: 274
+  grid_window_bars: [2, 4, 6]
+  grid_score_threshold: [1.0, 2.0, 3.0]
+  min_n_per_group: 30
+  bootstrap_reps: 2000
+  ci_level: 0.90
+  power: 0.80
+  seed: 42
+  gate_uplift_r: 0.15

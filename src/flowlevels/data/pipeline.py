@@ -18,13 +18,15 @@ import polars as pl
 
 from flowlevels.config import AppConfig
 from flowlevels.data.ingest import Ingestor, MemorySink
+from flowlevels.data.repair import merge_minutes, repair_day_holes
 from flowlevels.data.storage import ParquetStore, day_start_ms
 from flowlevels.stream.source import ReplaySource
+from flowlevels.stream.types import TRADE_SCHEMA
 from flowlevels.venues.base import DataNotAvailableError, VenueAdapter
 
 log = logging.getLogger(__name__)
 
-FOOTPRINT_FORMAT_VERSION = 2  # 2: completion info records time holes (D-026)
+FOOTPRINT_FORMAT_VERSION = 3  # 2: records time holes (D-026); 3: hole repair (D-032)
 
 
 @dataclass
@@ -36,7 +38,8 @@ class DayReport:
     first_id: int | None = None
     last_id: int | None = None
     gaps: list[dict[str, Any]] = field(default_factory=list)
-    holes: list[dict[str, Any]] = field(default_factory=list)  # time silences (D-026)
+    holes: list[dict[str, Any]] = field(default_factory=list)  # unrepaired silences (D-026)
+    repairs: list[dict[str, Any]] = field(default_factory=list)  # repaired holes (D-032)
     raw_bytes: int = 0
     out_bytes: int = 0
     seconds: float = 0.0
@@ -56,6 +59,7 @@ def fingerprint(cfg: AppConfig, symbol: str) -> dict[str, Any]:
         "exchange_tick": sc.exchange_tick,
         "bucket": sc.bucket,
         "max_trade_silence_s": cfg.data_quality.max_trade_silence_s,
+        "repair_holes": cfg.data_quality.repair_holes_from_trades,
     }
 
 
@@ -101,6 +105,7 @@ async def process_day(
         rep.first_id, rep.last_id = done.get("first_id"), done.get("last_id")
         rep.gaps = list(done.get("gaps", []))
         rep.holes = list(done.get("holes", []))
+        rep.repairs = list(done.get("repairs", []))
         return rep
     try:
         path = await adapter.download_trades_day(symbol, day, raw_dir)
@@ -108,7 +113,8 @@ async def process_day(
         return DayReport(symbol, day.isoformat(), "missing", error=str(exc))
     raw_bytes = path.stat().st_size
     t_dl = time.perf_counter() - t0
-    trades = adapter.read_trades_file(path)
+    agg = adapter.read_trades_file(path, keep_fill_ids=True)
+    trades = agg.select(list(TRADE_SCHEMA))
     start = day_start_ms(day)
     outside = trades.filter((pl.col("ts_ms") < start) | (pl.col("ts_ms") >= start + 86_400_000))
     if outside.height:
@@ -118,12 +124,40 @@ async def process_day(
     ing = Ingestor(cfg, [symbol], [sink])
     await ing.run(ReplaySource.from_frames(symbol, [trades]))
     fp_df, ohlcv_df = sink.footprint_df(symbol), sink.ohlcv_df(symbol)
-    p1 = store.write_part("footprint_1m", symbol, day, "hist", fp_df)
-    p2 = store.write_part("ohlcv_1m", symbol, day, "hist", ohlcv_df)
     gaps = [g.to_dict() for g in ing.trackers[symbol].gaps]
     holes = find_time_holes(trades, start, start + 86_400_000, cfg.data_quality.max_trade_silence_s)
+    repairs: list[dict[str, Any]] = []
     if holes:
         log.warning("%s %s: %d time hole(s) without trades: %s", symbol, day, len(holes), holes)
+    if holes and cfg.data_quality.repair_holes_from_trades:
+        fix = await repair_day_holes(adapter, symbol, day, agg, holes, raw_dir, keep_raw)
+        if fix.fills.height:
+            # The fills go through their own Ingestor: same code path, own id namespace.
+            fsink = MemorySink()
+            fing = Ingestor(cfg, [symbol], [fsink])
+            await fing.run(ReplaySource.from_frames(symbol, [fix.fills]))
+            fp_df, ohlcv_df = merge_minutes(
+                fp_df,
+                ohlcv_df,
+                trades,
+                fsink.footprint_df(symbol),
+                fsink.ohlcv_df(symbol),
+                fix.fills,
+            )
+        repairs, holes = fix.repaired, fix.unrepaired
+        log.warning(
+            "%s %s: repaired %d hole(s) from the raw trades archive, %d left",
+            symbol,
+            day,
+            len(repairs),
+            len(holes),
+        )
+    del agg
+    # A complete archive day supersedes partial live parts of the same day (D-032).
+    for ds in ("footprint_1m", "ohlcv_1m"):
+        store.remove_parts(ds, symbol, day, keep="hist")
+    p1 = store.write_part("footprint_1m", symbol, day, "hist", fp_df)
+    p2 = store.write_part("ohlcv_1m", symbol, day, "hist", ohlcv_df)
     rep = DayReport(
         symbol=symbol,
         day=day.isoformat(),
@@ -133,6 +167,7 @@ async def process_day(
         last_id=int(trades["trade_id"][-1]) if trades.height else None,
         gaps=gaps,
         holes=holes,
+        repairs=repairs,
         raw_bytes=raw_bytes,
         out_bytes=p1.stat().st_size + p2.stat().st_size,
     )
@@ -143,7 +178,8 @@ async def process_day(
         "first_id": rep.first_id,
         "last_id": rep.last_id,
         "gaps": gaps,
-        "holes": holes,
+        "holes": holes,  # unrepaired: excluded by flowlevels.data.quality (D-031)
+        "repairs": repairs,  # repaired, with source file + checksum and kline checks (D-032)
         "minutes": ohlcv_df.height,
     }
     store.mark_complete("footprint_1m", symbol, day, info)

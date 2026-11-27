@@ -32,8 +32,18 @@ class VenueAdapter(Protocol):
         """Download + checksum-verify one day of trades; return the local file path."""
         ...
 
-    def read_trades_file(self, path: Path) -> pl.DataFrame:
-        """Parse a downloaded trades file into TRADE_SCHEMA, sorted by trade_id."""
+    def read_trades_file(self, path: Path, keep_fill_ids: bool = False) -> pl.DataFrame:
+        """Parse a downloaded trades file into TRADE_SCHEMA, sorted by trade_id.
+
+        keep_fill_ids adds `first_fill_id`/`last_fill_id` (the raw fill-id range)."""
+        ...
+
+    async def download_raw_trades_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path:
+        """Download + verify one day of raw (per-fill) trades, used for hole repair."""
+        ...
+
+    def read_raw_trades_file(self, path: Path) -> pl.DataFrame:
+        """Parse a raw-trades file into TRADE_SCHEMA (trade_id = raw fill id)."""
         ...
 
     async def download_klines_1m_day(self, symbol: str, day: dt.date, dest_dir: Path) -> Path: ...

@@ -1,8 +1,10 @@
 """Data-quality exclusions: bars and sessions affected by recorded data holes (D-026, D-031).
 
-Holes are not repaired (owner decision 2026-11-26). Everything that computes statistics
-(baselines, level quality checks, research) must exclude what a hole touches and report how
-much it excluded. This module is the single place that decides "affected":
+Holes are repaired from the raw trades archive where possible (D-032); this module handles
+the holes that could not be repaired (the completion marker's `holes`), as a fallback.
+Everything that computes statistics (baselines, level quality checks, research) must
+exclude what a hole touches and report how much it excluded. This module is the single
+place that decides "affected":
 
 - a **bar** [bar_ts, bar_ts + res) is affected if it overlaps a hole;
 - a **session** (UTC day) is affected for level statistics if any hole overlaps the data its
@@ -46,6 +48,15 @@ def load_holes(store: ParquetStore, symbol: str) -> list[Hole]:
     return sorted(out, key=lambda h: h.after_ms)
 
 
+def load_repairs(store: ParquetStore, symbol: str) -> list[dict[str, object]]:
+    """Holes repaired from the raw trades archive (D-032), with source and checks."""
+    out: list[dict[str, object]] = []
+    for day in store.days("ohlcv_1m", symbol):
+        info = store.completion("ohlcv_1m", symbol, day) or {}
+        out += [{"symbol": symbol, "day": day.isoformat(), **r} for r in info.get("repairs", [])]
+    return out
+
+
 def overlaps_any(holes: list[Hole], start_ms: int, end_ms: int) -> bool:
     return any(h.overlaps(start_ms, end_ms) for h in holes)
 
@@ -85,7 +96,7 @@ class Exclusions:
         )
         days = ", ".join(f"{s} {d}" for s, d in self.excluded) or "none"
         return (
-            f"Data holes (not repaired, D-026/D-031): {holes} "
+            f"Unrepaired data holes (D-026/D-031): {holes} "
             f"({self.hole_minutes:.1f} min in total). "
             f"Excluded sessions (level inputs overlap a hole): {n} of {self.sessions_total} "
             f"({pct:.1%}): {days}."
