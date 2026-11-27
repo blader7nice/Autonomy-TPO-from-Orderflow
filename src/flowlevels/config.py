@@ -368,6 +368,29 @@ class PlanConfig(_Strict):
     )
 
 
+class Iteration4Config(_Strict):
+    """ITERATION-4 (FINAL), docs/research/ITERATION-4-PREREG.md. Pre-registered 2026-11-27."""
+
+    bias: list[str] = Field(default_factory=lambda: ["b1", "b2"])
+    confirmation: list[str] = Field(default_factory=lambda: ["c1", "c2"])
+    min_rr: list[float] = Field(default_factory=lambda: [2.0, 3.0])
+    ema_period: int = 50
+    ema_slope_bars: int = 3
+    fractal_n: int = 2
+    zone_timeframes: list[str] = Field(default_factory=lambda: ["1h", "30m"])
+    zone_max_age_h: int = 168
+    sweep_ticks: int = 1
+    top_third: float = 0.6666666666666666
+    orderflow_res: str = "30m"
+    orderflow_detectors: list[str] = Field(default_factory=lambda: ["absorption", "exhaustion"])
+    min_stop_k_atr: float = 0.25
+    min_stop_cost_mult: float = 3.0
+    time_stop_minutes: int = 1440
+    footprint_warmup_days: int = 20
+    chunk_rows: int = 1_000_000
+    max_disk_pct: float = 70.0
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -384,6 +407,7 @@ class AppConfig(_Strict):
     supply_zone: SupplyZoneConfig = SupplyZoneConfig()
     iteration2: Iteration2Config = Iteration2Config()
     plan: PlanConfig = PlanConfig()
+    iteration4: Iteration4Config = Iteration4Config()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:

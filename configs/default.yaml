@@ -235,3 +235,25 @@ plan:
   warmup_days: 40
   min_trades: 60
   sensitivities: [default, maker_entry, slip_okx_2tick, slip_okx_4tick]
+
+# ---- ITERATION-4 (FINAL), pre-registered 2026-11-27: docs/research/ITERATION-4-PREREG.md.
+# Grid bias x confirmation x min_rr = 8 configurations, no others.
+iteration4:
+  bias: [b1, b2]
+  confirmation: [c1, c2]
+  min_rr: [2.0, 3.0]
+  ema_period: 50
+  ema_slope_bars: 3
+  fractal_n: 2
+  zone_timeframes: [1h, 30m]
+  zone_max_age_h: 168
+  sweep_ticks: 1
+  top_third: 0.6666666666666666
+  orderflow_res: 30m
+  orderflow_detectors: [absorption, exhaustion]
+  min_stop_k_atr: 0.25
+  min_stop_cost_mult: 3.0
+  time_stop_minutes: 1440
+  footprint_warmup_days: 20
+  chunk_rows: 1000000
+  max_disk_pct: 70.0
