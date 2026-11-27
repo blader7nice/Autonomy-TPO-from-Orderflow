@@ -362,6 +362,11 @@ paper:
     - {id: b, trigger: T2, stop: far, k: 0.5, exit2: lvl}
     - {id: c, trigger: T2, stop: wick, k: 0.1, exit2: trail}   # wick of the 30m confirmation candle
     - {id: d, trigger: T1, stop: far, k: 0.5, exit2: lvl}
+  backtest:            # A+B, default costs (reference run 20261127T211931Z-paperref-a086f3e1, D-046)
+    a: {n: 218, exp_r: -0.0790, exp_bps: -7.73, win_rate: 0.3991, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    b: {n: 216, exp_r: -0.1095, exp_bps: -7.28, win_rate: 0.3843, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    c: {n: 631, exp_r: -0.2207, exp_bps: -14.05, win_rate: 0.3471, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    d: {n: 144, exp_r: -0.2300, exp_bps: -12.60, win_rate: 0.3542, source: "A+B in-sample, run 20261127T211931Z-paperref"}
   poll_offset_s: 3.0         # poll REST klines this many seconds after each minute
   poll_limit: 5              # klines per poll (REST weight 1)
   backfill_page: 1000        # klines per backfill page (REST weight 5)

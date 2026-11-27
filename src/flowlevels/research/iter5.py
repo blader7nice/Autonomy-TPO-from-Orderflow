@@ -320,7 +320,7 @@ def chart_trade(t: dict[str, Any], m: pl.DataFrame, cfg: AppConfig, path: Path, 
         else:
             ax.axhspan(min(near, far), max(near, far), color=C_POI, alpha=0.15, zorder=0)
         poi_txt.append(f"{kind} {near:,.6g}" + ("" if near == far else f"–{far:,.6g}"))
-    ax.text(0.01, 0.02, "POI (orange): " + "; ".join(poi_txt) + f"; stop anchor (far edge) {t['far']:,.6g}",
+    ax.text(0.01, 0.02, "POI (orange): " + "; ".join(poi_txt) + (f"; stop anchor (confirmation wick) {t['stop_anchor']:,.6g}" if np.isfinite(t.get("stop_anchor") or np.nan) else f"; stop anchor (far edge) {t['far']:,.6g}"),
             transform=ax.transAxes, fontsize=8, color=INK, va="bottom",
             bbox={"facecolor": "white", "alpha": 0.8, "lw": 0})  # fmt: skip
     for bars, per, col, lab in ((b4, m4.H4, C_EMA, "4H EMA50 (at 4H close)"),
