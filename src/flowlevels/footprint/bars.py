@@ -24,7 +24,7 @@ import polars as pl
 
 from flowlevels.footprint.minute import MINUTE_MS
 
-RESOLUTIONS_MIN = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "1h": 60}
+RESOLUTIONS_MIN = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
 
 
 def res_ms(res: str) -> int:

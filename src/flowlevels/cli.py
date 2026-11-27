@@ -478,6 +478,72 @@ def _cmd_plan_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_iter4_run(args: argparse.Namespace) -> int:
+    """ITERATION-4 (FINAL) on windows A and B: grid, kill rule, report, example charts."""
+    import resource
+    import time
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.research import iter4
+
+    settings, cfg = _setup()
+    t0 = time.perf_counter()
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-iter4-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    kroot = settings.data_dir / "klines"
+    tr, meta = iter4.iter4_trades(cfg, kroot, ParquetStore(settings.data_dir))
+    md, summary, sel = iter4.report(tr, meta, cfg)
+    secs = time.perf_counter() - t0
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    head = (
+        f"# ITERATION-4 (FINAL) — run `{run_id}`\n\nCommit `{git_commit()}`, config "
+        f"`{config_hash(cfg)}`. Pre-registration: `docs/research/ITERATION-4-PREREG.md`. "
+        f"Windows A {cfg.plan.a_start} … {cfg.plan.a_end}, B {cfg.plan.b_start} … "
+        f"{cfg.plan.b_end}; hold-out {cfg.plan.holdout_start} … {cfg.plan.holdout_end} not "
+        f"used (0 runs). Costs `{cfg.costs.fee_profile}` + `{cfg.costs.slippage}`. "
+        f"Run time {secs:.0f} s, peak RSS {rss:.2f} GB.\n\n"
+    )
+    md = head + md
+    if tr.height:
+        tr.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    meta_out = {k: {kk: vv for kk, vv in v.items() if kk != "c2_keys"} for k, v in meta.items()}
+    (out / "meta.json").write_text(
+        json.dumps(meta_out | {"summary": summary, "commit": git_commit()}, indent=2, default=str)
+    )
+    (out / "REPORT.md").write_text(md)
+    dest = Path(args.copy_to)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / f"ITER4-{run_id}.md").write_text(md)
+    if sel is not None and tr.height:
+        ex = iter4.example_trades(tr, sel, cfg, kroot, dest / "iter4")
+        sel_note = (
+            f"selected configuration `{sel}`"
+            if summary.get("selected")
+            else f"configuration `{sel}` (most trades; none reached the minimum)"
+        )
+        (dest / "TRADES-ITER4.md").write_text(
+            f"# ITERATION-4 example trades — run `{run_id}`\n\n"
+            f"10 trades of the {sel_note}: the 3 best, the 3 worst and 4 around the median net R "
+            "(default costs). Verdict: "
+            f"**{summary['verdict']}** ({summary['reason']}).\n\n"
+            "Legend: grey candles = 15m (hollow = up); yellow bands = the sweep bar and the "
+            "close-back (confirmation) bar; orange dashed line / band = the POI(s) (level / zone); "
+            "violet dotted = the 15m swing that had to be swept; blue / red / green = entry / stop / "
+            "target from the entry bar on; X = exit. Bias: b1 shows the 4H EMA50 as known at each "
+            "4H close; b2 marks the 4H fractal swings (▼ high, ▲ low) at their confirmation time "
+            "(2 bars after the swing bar).\n\n" + ex
+        )
+    print(md)
+    print(f"Run dir: {out}")
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -517,6 +583,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frames", required=True)
     p.add_argument("--ref", required=True)
     p.add_argument("--out", required=True)
+    p = add("iter4-run", _cmd_iter4_run, "ITERATION-4 (FINAL) grid, report and example charts")
+    p.add_argument("--copy-to", default="docs/research")
     p = add("plan-run", _cmd_plan_run, "MASTER-PLAN phase a (Supply Zone) or b (Dalton)")
     p.add_argument("--phase", choices=["a", "b"], required=True)
     p.add_argument("--copy-to", default="docs/research")
