@@ -257,3 +257,32 @@ iteration4:
   footprint_warmup_days: 20
   chunk_rows: 1000000
   max_disk_pct: 70.0
+
+# ---- ITERATION-5 (FINAL, binding hold-out), pre-registered 2026-11-27:
+# docs/research/ITERATION-5-PREREG.md. Grid trigger x stop_k_atr x second_exit = 8, no others.
+iteration5:
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT]
+  trigger: [T1, T2]
+  stop_k_atr: [0.25, 0.5]
+  second_exit: [lvl, trail]
+  warmup_days: 150
+  ema_period: 50
+  ema_slope_bars: 3
+  fractal_n: 2
+  zone_timeframes: [1h, 30m]
+  zone_max_age_h: 168
+  sweep_ticks: 1
+  top_third: 0.6666666666666666
+  sweep_range_k_atr15: 1.5     # T1: sweep candle range >= 1.5 x ATR(15m)
+  atr15_period: 14
+  t2_confirm_bars: 3           # T2: touch bar + next 2 bars
+  pin_wick_body: 2.0
+  pin_close_third: 0.6666666666666666
+  min_stop_k_atr: 0.5
+  min_stop_cost_mult: 3.0
+  tp1_min_r: 1.0
+  tp1_fraction: 0.5
+  trail_k_atr: 1.5
+  time_stop_minutes: 2880      # 48 h
+  min_trades: 100
+  min_positive_symbols: 4

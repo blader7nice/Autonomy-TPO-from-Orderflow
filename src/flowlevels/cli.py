@@ -544,6 +544,72 @@ def _cmd_iter4_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_iter5_run(args: argparse.Namespace) -> int:
+    """ITERATION-5 (FINAL) on windows A and B: grid, gate, report, example charts.
+    Never touches the hold-out (window loader guards); the hold-out run is a separate step."""
+    import resource
+    import time
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.research import iter5
+
+    settings, cfg = _setup()
+    t0 = time.perf_counter()
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-iter5-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    kroot = settings.data_dir / "klines"
+    tr, meta = iter5.iter5_trades(cfg, kroot)
+    md, summary, sel = iter5.report(tr, meta, cfg)
+    secs = time.perf_counter() - t0
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+    head = (
+        f"# ITERATION-5 (FINAL, binding hold-out) — run `{run_id}`\n\nCommit `{git_commit()}`, "
+        f"config `{config_hash(cfg)}`. Pre-registration: `docs/research/ITERATION-5-PREREG.md`. "
+        f"Windows A {cfg.plan.a_start} … {cfg.plan.a_end}, B {cfg.plan.b_start} … "
+        f"{cfg.plan.b_end}; hold-out {cfg.plan.holdout_start} … {cfg.plan.holdout_end} not "
+        f"scored (0 runs; B's warm-up uses hold-out-span candles as indicator input only). "
+        f"Symbols {', '.join(cfg.iteration5.symbols)}. Costs `{cfg.costs.fee_profile}` + "
+        f"`{cfg.costs.slippage}`. Run time {secs:.0f} s, peak RSS {rss:.2f} GB.\n\n"
+    )
+    md = head + md
+    if tr.height:
+        tr.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    (out / "meta.json").write_text(
+        json.dumps(meta | {"summary": summary, "commit": git_commit()}, indent=2, default=str)
+    )
+    (out / "REPORT.md").write_text(md)
+    dest = Path(args.copy_to)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / f"ITER5-{run_id}.md").write_text(md)
+    if sel is not None and tr.height:
+        ex = iter5.example_trades(tr, sel, cfg, kroot, dest / "iter5")
+        sel_note = (
+            f"selected configuration `{sel}`"
+            if summary.get("selected")
+            else f"configuration `{sel}` (most trades; none reached the minimum)"
+        )
+        (dest / "TRADES-ITER5.md").write_text(
+            f"# ITERATION-5 example trades — run `{run_id}`\n\n"
+            f"10 trades of the {sel_note}: the 3 best, the 3 worst and 4 around the median net R "
+            f"(default costs). Verdict: **{summary['verdict']}** ({summary['reason']}).\n\n"
+            "Legend: grey candles = 15m (T1) or 30m (T2), hollow = up; yellow bands = the sweep "
+            "and close-back bars (T1) or the touch … confirmation bars (T2); orange dashed line / "
+            "band = the POI(s) (level / zone), the caption names them and the far edge that "
+            "anchors the stop; violet dotted = the 15m swing that had to be swept (T1); blue / "
+            "red / green = entry / stop / TP1 (dashed green = TP2 for `lvl`) from the entry on; "
+            "X = the two half exits. Bias: teal = 4H EMA50 and magenta = daily EMA50, each as "
+            "known at its bar close; the subtitle gives the values at the entry.\n\n" + ex
+        )
+    print(md)
+    print(f"Run dir: {out}")
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -584,6 +650,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref", required=True)
     p.add_argument("--out", required=True)
     p = add("iter4-run", _cmd_iter4_run, "ITERATION-4 (FINAL) grid, report and example charts")
+    p.add_argument("--copy-to", default="docs/research")
+    p = add("iter5-run", _cmd_iter5_run, "ITERATION-5 (FINAL) in-sample grid, gate, report, charts")
     p.add_argument("--copy-to", default="docs/research")
     p = add("plan-run", _cmd_plan_run, "MASTER-PLAN phase a (Supply Zone) or b (Dalton)")
     p.add_argument("--phase", choices=["a", "b"], required=True)

@@ -391,6 +391,39 @@ class Iteration4Config(_Strict):
     max_disk_pct: float = 70.0
 
 
+class Iteration5Config(_Strict):
+    """ITERATION-5 (FINAL, binding hold-out), docs/research/ITERATION-5-PREREG.md.
+    Pre-registered 2026-11-27."""
+
+    symbols: list[str] = Field(
+        default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"]
+    )
+    trigger: list[str] = Field(default_factory=lambda: ["T1", "T2"])
+    stop_k_atr: list[float] = Field(default_factory=lambda: [0.25, 0.5])
+    second_exit: list[str] = Field(default_factory=lambda: ["lvl", "trail"])
+    warmup_days: int = 150
+    ema_period: int = 50
+    ema_slope_bars: int = 3
+    fractal_n: int = 2
+    zone_timeframes: list[str] = Field(default_factory=lambda: ["1h", "30m"])
+    zone_max_age_h: int = 168
+    sweep_ticks: int = 1
+    top_third: float = 0.6666666666666666
+    sweep_range_k_atr15: float = 1.5
+    atr15_period: int = 14
+    t2_confirm_bars: int = 3
+    pin_wick_body: float = 2.0
+    pin_close_third: float = 0.6666666666666666
+    min_stop_k_atr: float = 0.5
+    min_stop_cost_mult: float = 3.0
+    tp1_min_r: float = 1.0
+    tp1_fraction: float = 0.5
+    trail_k_atr: float = 1.5
+    time_stop_minutes: int = 2880
+    min_trades: int = 100
+    min_positive_symbols: int = 4
+
+
 class AppConfig(_Strict):
     version: int = Field(ge=1)
     symbols: dict[str, SymbolConfig]
@@ -408,6 +441,7 @@ class AppConfig(_Strict):
     iteration2: Iteration2Config = Iteration2Config()
     plan: PlanConfig = PlanConfig()
     iteration4: Iteration4Config = Iteration4Config()
+    iteration5: Iteration5Config = Iteration5Config()
 
     def symbol(self, name: str) -> SymbolConfig:
         try:
