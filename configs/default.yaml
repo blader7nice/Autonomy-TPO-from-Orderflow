@@ -157,6 +157,6 @@ iteration1:
   min_target_r: 1.5             # take the trade only if target distance >= 1.5 x stop
   time_stop_bars: 48            # 48 x 5m = 4 h
   first_touch_only: true
-  min_zone_score: null          # set to the frozen in-sample median before the run
+  min_zone_score: 1.0           # frozen in-sample median (2026-11-27, zones only; D-037)
   min_treatment_trades: 100
   secondary_exits: [2R, 3R]
