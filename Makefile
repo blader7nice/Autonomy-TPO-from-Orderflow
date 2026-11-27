@@ -11,7 +11,7 @@ RES ?= 5m
 TODAY := $(shell date -u +%Y-%m-%d)
 
 .PHONY: help sync lint format typecheck test check verify-api bootstrap validate-klines \
-        live-smoke levels footprint sanity-plots levels-stats
+        live-smoke levels footprint sanity-plots levels-stats backtest
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -59,3 +59,7 @@ sanity-plots:
 
 levels-stats:
 	$(RUN) flowlevels levels-stats --symbols $(SYMBOLS) --out docs/sanity/levels-stats-$(TODAY).md
+
+# Phase 3: 60-day tuning-window run, in-sample report. Never runs the hold-out.
+backtest:
+	nice -n 10 $(RUN) flowlevels backtest --symbols $(SYMBOLS)

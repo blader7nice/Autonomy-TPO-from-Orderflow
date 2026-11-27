@@ -36,8 +36,9 @@ in this order, from the repository root, after `cp .env.example .env` and editin
 | 5 | `make levels TS=2026-11-20T14:00` | Prints levels, zones and the footprint of the bar at a timestamp | 2 |
 | 6 | `make sanity-plots` | Writes PNGs of 3 random clean days (plus 2026-11-17) with levels and VWAP bands to `docs/sanity/` | 2 |
 | 7 | `make levels-stats` | Levels/zones per day and zone widths over all clean sessions, to `docs/sanity/levels-stats-<date>.md` | 2 |
-| 7 | `make backtest` | 60-day tuning run (small grid) | 3 |
-| 8 | `make holdout` | **Single** hold-out run on the 9 months before the tuning window, frozen thresholds | 3b |
+| 8 | `make bootstrap DAYS=88` | Extends history to the 60-day tuning window plus ~4 weeks of warm-up (levels, baselines); repairs archive holes from the raw trades archive (D-032) | 3 |
+| 9 | `make backtest` | 60-day tuning run: 36-config grid, in-sample `data/research/runs/<id>/REPORT.md` (copied to `docs/research/`). Never touches the hold-out | 3 |
+| 10 | `make holdout` | **Single** hold-out run on the 9 months before the tuning window, frozen thresholds | 3b |
 
 Environment variables are documented in `.env.example`. Variables can be overridden per
 command, for example `make bootstrap DAYS=7 SYMBOLS=BTCUSDT`.

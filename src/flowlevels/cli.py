@@ -225,6 +225,49 @@ def _cmd_levels_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backtest(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    import yaml
+
+    from flowlevels.data.quality import load_repairs
+    from flowlevels.data.storage import ParquetStore
+    from flowlevels.research import backtest, report
+
+    settings, cfg = _setup()
+    store = ParquetStore(settings.data_dir)
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-{config_hash(cfg)[:8]}"
+    out = settings.data_dir / "research/runs" / run_id
+    out.mkdir(parents=True, exist_ok=True)
+    trades, meta = backtest.run(store, cfg, args.symbols)
+    meta |= {
+        "run_id": run_id,
+        "kind": "tuning",
+        "commit": git_commit(),
+        "config_hash": config_hash(cfg),
+        "created_utc": report.created(),
+        "symbols": args.symbols,
+        "repairs": [
+            f"{r['symbol']} {r['day']} ({r['check']['fills']} fills, "  # type: ignore[index]
+            f"{r['check']['interior_minutes']} minutes kline-exact)"  # type: ignore[index]
+            for s in args.symbols
+            for r in load_repairs(store, s)
+        ],
+    }
+    md, summary = report.render(trades, meta, cfg)
+    trades.write_parquet(out / "trades.parquet", compression="zstd")
+    (out / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False))
+    (out / "meta.json").write_text(json.dumps(meta | {"summary": summary}, indent=2, default=str))
+    (out / "REPORT.md").write_text(md)
+    if args.copy_to:
+        Path(args.copy_to).mkdir(parents=True, exist_ok=True)
+        (Path(args.copy_to) / f"REPORT-{run_id}.md").write_text(md)
+    print(md)
+    print(f"Run dir: {out}")
+    return 0
+
+
 Handler = Callable[[argparse.Namespace], int]
 
 
@@ -269,6 +312,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
     p.add_argument("--out", default="")
     p.add_argument("--title", default="Level statistics")
+    p = add("backtest", _cmd_backtest, "Phase 3 tuning-window run (in-sample report)")
+    p.add_argument("--symbols", nargs="+", default=["BTCUSDT", "ETHUSDT"])
+    p.add_argument("--copy-to", default="docs/research", help="Also copy REPORT.md here")
     return parser
 
 
