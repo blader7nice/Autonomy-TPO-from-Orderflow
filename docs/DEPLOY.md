@@ -118,3 +118,8 @@ Tailscale needs no inbound firewall rule; your SSH access is unchanged.
   watchdog) when the engine heartbeat is older than 3 minutes, plus a "running again" message.
 - systemd restarts either service 10–15 s after a crash.
 - Dashboard → Health shows lag per symbol, heartbeat, disk, notification queue and events.
+- Dashboard → Health → *Independent cross-check* (every 15 min): engine values vs a separate
+  implementation, stored candles vs Binance REST; Telegram alert when it starts failing. From
+  the shell: `.venv/bin/flowlevels verify` (0 = pass, 1 = mismatch). The web service makes
+  outbound HTTPS calls to Binance for this and for the chart readout (REST weight ≤ 2 per symbol
+  per minute while a chart is open).

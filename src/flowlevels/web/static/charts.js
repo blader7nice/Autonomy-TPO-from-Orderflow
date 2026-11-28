@@ -59,6 +59,7 @@ export function candles(chart, symbol, lastPrice) {
     priceFormat: { type: "custom", minMove: Math.pow(10, -p), formatter: (x) => fmtPrice(symbol, x) },
     priceLineColor: token("--text-2"),
     priceLineStyle: 2,
+    lastValueVisible: false, // the last price is a pane label (PaneLabels): the axis keeps only ticks
   });
 }
 
@@ -87,9 +88,10 @@ export class Bands {
     this.req = requestUpdate;
   }
   detached() {}
-  set(bands, barTimes) {
+  set(bands, barTimes, reserveRight = 0) {
     this.bands = bands;
     this.times = barTimes;
+    this.reserve = reserveRight; // px kept free for the right-edge labels
     if (this.req) this.req();
   }
   updateAllViews() {}
@@ -129,9 +131,12 @@ export class Bands {
               const ny = b.dir > 0 ? top : top + h; // near edge line (where price arrives)
               ctx.fillRect(Math.round(x1 * hr), Math.round(ny * vr) - Math.round(hr / 2), Math.round((x2 - x1) * hr), Math.max(1, Math.round(vr)));
               const ly = top + h / 2;
-              if (b.label && h >= 12 && !labels.some((l) => Math.abs(l.y - ly) < 13 && Math.abs(l.x - x1) < 90)) {
+              ctx.font = `${Math.round(10 * vr)}px ${token("--font")}`;
+              const tw = b.label ? ctx.measureText(b.label).width / hr : 0;
+              const reserve = typeof self.reserve === "function" ? self.reserve() : self.reserve || 0;
+            const fits = x1 + 6 + tw <= width - reserve - 4 && ly > 8;
+              if (b.label && h >= 12 && fits && !labels.some((l) => Math.abs(l.y - ly) < 13 && Math.abs(l.x - x1) < 90)) {
                 labels.push({ x: x1, y: ly });
-                ctx.font = `${Math.round(10 * vr)}px ${token("--font")}`;
                 ctx.fillStyle = b.text;
                 ctx.textBaseline = "middle";
                 ctx.fillText(b.label, Math.round((x1 + 6) * hr), Math.round((top + h / 2) * vr));
@@ -181,4 +186,149 @@ export function sparkline(points, color) {
     <line x1="2" x2="110" y1="${zero.toFixed(1)}" y2="${zero.toFixed(1)}" stroke="${token("--border-strong")}" stroke-dasharray="2 3"/>
     <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.5" fill="${color}"/></svg>`;
+}
+
+// ---------------------------------------------------------------- step values (EMA)
+
+// EMA points sit at each closed bar's close: the rules use that value until the next close.
+// Carry the last value to `tEnd` so the line reaches the newest candle.
+export function stepTo(points, tEnd) {
+  const out = points.map((x) => ({ time: x[0], value: x[1] }));
+  const last = out[out.length - 1];
+  if (last && tEnd > last.time) out.push({ time: tEnd, value: last.value });
+  return out;
+}
+
+// Value in force at time t (seconds): the last point with time <= t.
+export function valueAt(points, t) {
+  let lo = 0, hi = points.length - 1, k = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (points[m][0] <= t) { k = m; lo = m + 1; } else hi = m - 1;
+  }
+  return k < 0 ? null : points[k][1];
+}
+
+// ---------------------------------------------------------------- right-edge labels
+
+const PH = 18, GAP = 2, FONT_PX = 11;
+let measureCtx = null;
+function textWidth(s) {
+  if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+  measureCtx.font = `600 ${FONT_PX}px ${token("--font")}`;
+  return measureCtx.measureText(s).width;
+}
+
+// Price labels drawn inside the pane at its right edge - never on the price axis, so they
+// cannot cover the axis tick labels. Labels closer than one pill height are merged (same
+// `group`; with `exact` only at the identical price) or pushed apart with a leader to their price. Items with `clamp` (EMAs) stay
+// visible when their price is off-scale: pinned to the top/bottom edge with an arrow. When
+// there is no room, the labels with the lowest `prio` are dropped.
+export class PaneLabels {
+  constructor() { this.items = []; this.compact = false; }
+  attached({ series, requestUpdate }) { this.series = series; this.req = requestUpdate; }
+  detached() {}
+  set(items, compact) { this.items = items; this.compact = compact; if (this.req) this.req(); }
+  updateAllViews() {}
+  text(g) {
+    // merged position labels read "a·b entry"; other merged labels "pdVAL · pwVAL"
+    const tags = [...new Set(g.items.map((i) => i.tag).filter(Boolean))];
+    const base = [...new Set(g.items.map((i) => i.name).filter(Boolean))].join(" · ");
+    const names = tags.length ? `${tags.join("·")} ${base}` : base;
+    if (this.compact && !g.clampDir && !g.items.some((i) => i.price_always)) return names;
+    const prices = [...new Set(g.items.map((i) => i.text))].join(" / ");
+    return `${g.clampDir < 0 ? "↑ " : g.clampDir > 0 ? "↓ " : ""}${names} ${prices}`.trim();
+  }
+  // Width the labels need: from the real layout once the chart has a price scale (merged
+  // labels are wider than single ones), else an estimate from the single labels.
+  maxWidth(H) {
+    let w = 0;
+    if (H && this.series && this.series.priceToCoordinate(this.items[0]?.price ?? 0) != null) {
+      for (const g of this.layout(H)) w = Math.max(w, textWidth(this.text(g)));
+    } else {
+      for (const i of this.items) w = Math.max(w, textWidth(this.compact && !i.price_always ? `${i.tag || ""} ${i.name}` : `↑ ${i.tag || ""} ${i.name} ${i.text}`));
+    }
+    return Math.ceil(w) + 12;
+  }
+  layout(H) {
+    const pts = [];
+    for (const it of this.items) {
+      const y0 = this.series.priceToCoordinate(it.price);
+      if (y0 == null) continue;
+      let clampDir = 0;
+      if (y0 < 0 || y0 > H) {
+        if (!it.clamp) continue;
+        clampDir = y0 < 0 ? -1 : 1;
+      }
+      pts.push({ it, y: Math.min(Math.max(y0, PH / 2 + 1), H - PH / 2 - 1), clampDir });
+    }
+    pts.sort((a, b) => a.y - b.y);
+    const groups = [];
+    for (const p of pts) {
+      const g = groups[groups.length - 1];
+      const near = p.it.mergePx ?? PH; // closer than this: one label; else offset with a leader
+      const same = g && p.it.group && g.group === p.it.group && !p.clampDir && !g.clampDir && p.y - g.ys[g.ys.length - 1] < near;
+      if (same && (!p.it.exact || g.items.every((i) => i.text === p.it.text))) {
+        g.items.push(p.it); g.ys.push(p.y);
+        g.prio = Math.max(g.prio, p.it.prio || 0);
+      } else {
+        groups.push({ items: [p.it], ys: [p.y], clampDir: p.clampDir, group: p.it.group, prio: p.it.prio || 0, bg: p.it.bg, fg: p.it.fg });
+      }
+    }
+    for (const g of groups) { g.y0 = g.ys.reduce((a, b) => a + b, 0) / g.ys.length; g.y = g.y0; }
+    const cap = Math.max(1, Math.floor((H - 2) / (PH + GAP)));
+    while (groups.length > cap) { // drop the least important labels until they fit
+      let k = 0;
+      groups.forEach((g, i) => { if (g.prio < groups[k].prio) k = i; });
+      groups.splice(k, 1);
+    }
+    for (let i = 0; i < groups.length; i++) {
+      const lo = i ? groups[i - 1].y + PH + GAP : PH / 2 + 1;
+      groups[i].y = Math.max(groups[i].y, lo);
+    }
+    for (let i = groups.length - 1; i >= 0; i--) {
+      const hi = i < groups.length - 1 ? groups[i + 1].y - PH - GAP : H - PH / 2 - 1;
+      groups[i].y = Math.min(groups[i].y, hi);
+    }
+    return groups;
+  }
+  paneViews() {
+    const self = this;
+    return [{
+      zOrder: () => "top",
+      renderer: () => ({
+        draw(target) {
+          target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+            if (!self.series) return;
+            const W = mediaSize.width, H = mediaSize.height;
+            ctx.font = `600 ${FONT_PX}px ${token("--font")}`;
+            ctx.textBaseline = "middle";
+            const gs = self.layout(H).map((g) => {
+              const s = self.text(g);
+              const w = Math.ceil(ctx.measureText(s).width) + 10;
+              return { ...g, s, w, x: W - w - 2, yi: Math.round(g.y) };
+            });
+            const widest = gs.reduce((m, g) => Math.max(m, g.w + 2), 0);
+            const xl = W - widest; // left edge of the label column
+            // leaders first (pills are drawn over them): price level -> column -> pill
+            for (const g of gs) {
+              if (Math.abs(g.y - g.y0) <= 1.5 || g.clampDir) continue;
+              const yt = Math.round(g.y0) + 0.5;
+              ctx.strokeStyle = g.items[0].lc || g.bg; ctx.lineWidth = 1;
+              ctx.beginPath(); ctx.moveTo(xl - 14, yt); ctx.lineTo(xl - 8, yt); ctx.lineTo(xl - 2, g.yi + 0.5); ctx.lineTo(g.x, g.yi + 0.5); ctx.stroke();
+            }
+            for (const g of gs) {
+              ctx.fillStyle = g.bg;
+              ctx.beginPath();
+              if (ctx.roundRect) ctx.roundRect(g.x, g.yi - PH / 2, g.w, PH, 4); else ctx.rect(g.x, g.yi - PH / 2, g.w, PH);
+              ctx.fill();
+              ctx.fillStyle = g.fg;
+              ctx.fillText(g.s, g.x + 5, g.yi + 0.5);
+            }
+            self.drawnWidth = widest; // the POI band labels keep clear of this
+          });
+        },
+      }),
+    }];
+  }
 }

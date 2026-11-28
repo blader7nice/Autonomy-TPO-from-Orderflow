@@ -1,6 +1,6 @@
 # PROGRESS
 
-Current phase: **LIVE PAPER FORWARD TEST of the ITERATION-5 method — built, smoke-tested, ready for install (2026-11-27). STOP: the owner installs the systemd units and Tailscale (`docs/DEPLOY.md`); the official paper start is the first systemd start.** FINAL-KILL stands (the paper test changes no verdict). Hold-out runs: 0.
+Current phase: **LIVE PAPER FORWARD TEST running** (installed by the owner on 2026-11-28; ledgers start at the first systemd start). Dashboard fixes + verification layer done 2026-11-28 (D-048, deploy = restart `flowlevels-web`). FINAL-KILL stands. Hold-out runs: 0.
 
 ## Phase 0 — Repo skeleton ✅ (2026-11-25)
 - Done: uv project (Python 3.12, `uv.lock`), package layout `src/flowlevels/*`, typed settings
@@ -376,3 +376,20 @@ Steps:
 
 193 tests. Cumulative in-sample configurations: **78**. Hold-out runs: **0**.
 STOP for the owner's install.
+
+### Dashboard fixes + verification layer (owner, 2026-11-28) — ✅ (D-048)
+Web only: no strategy, engine or ledger change, rule versions unchanged.
+- Price axis: no more overlap. The axis shows only tick prices. TPO levels, EMAs, positions
+  and the last price are right-edge pills inside the plot (merged or offset with leaders).
+- The OHLC readout moved above the chart, so POI labels are no longer covered.
+- EMA lines run to the newest candle (the value in force since the last close). An off-scale
+  daily EMA50 is pinned to the chart edge with ↑/↓, and the readout says "above/below chart".
+- Verification layer:
+  - Crosshair readout with the exact 4H/D EMA50, session VWAP and prior-day/week TPO levels
+    per bar.
+  - `flowlevels.paper.verify`: an independent re-implementation, compared with the engine and
+    with Binance REST.
+  - Health "Independent cross-check" card (every 15 min, Telegram on fail) and the
+    `flowlevels verify` CLI.
+  - First live run: PASS on all 6 symbols, max relative difference 1.8e-15.
+- 205 tests (12 new). The `docs/screens/` screenshots were refreshed.

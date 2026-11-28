@@ -475,6 +475,9 @@ class PaperConfig(_Strict):
     stall_alert_minutes: int = Field(default=5, ge=2)
     heartbeat_stale_minutes: int = Field(default=3, ge=1)
     disk_alert_pct: float = Field(default=70.0, gt=0, le=100)
+    verify_minutes: int = Field(default=15, ge=1, le=1440)
+    verify_rel_tol: float = Field(default=1e-9, gt=0, le=1e-3)
+    verify_history_days: int = Field(default=14, ge=0, le=120)
     summary_timezone: str = "Europe/Warsaw"
     summary_weekday: int = Field(default=6, ge=0, le=6)  # Monday = 0, Sunday = 6
     summary_time: str = Field(default="20:00", pattern=r"^\d{2}:\d{2}$")

@@ -379,6 +379,9 @@ paper:
   stall_alert_minutes: 5     # alert if a symbol has no new closed minute for this long
   heartbeat_stale_minutes: 3 # web process alerts if the engine heartbeat is older
   disk_alert_pct: 70.0
+  verify_minutes: 15         # dashboard: independent cross-check every N minutes (flowlevels verify)
+  verify_rel_tol: 1.0e-9     # max relative difference engine vs reference (EMA float rounding)
+  verify_history_days: 14    # TPO levels of the last N days, rule code vs reference
   summary_timezone: Europe/Warsaw
   summary_weekday: 6         # Sunday
   summary_time: "20:00"

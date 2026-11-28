@@ -55,17 +55,43 @@ newest closed 1m candle (normal: 4–70 s; alert after 5 min). *Updated Xs ago* 
 write. *Open* = open paper positions over all variants. A "Reconnecting…" chip means the
 browser lost the live connection; the page falls back to polling every 30 s.
 
-**Chart.** Symbol chips and 15m / 30m / 1h / 4h. Candles of closed bars only. Solid white step
-line = 4H EMA50, dashed = daily EMA50 (step lines: the value that was known at each close; the
-daily EMA is often off-screen far from price, its value is in the side panel). The badge (LONG /
-SHORT / NO BIAS) and the "Bias at the last close" card show the three bias conditions; trades
-only go with the bias. Green / red translucent bands = fresh demand / supply zones (H1, M30)
-before their first test; amber = being tested now. Dashed grey lines with axis labels = prior
-day / week TPO levels (pdVAH, pdPOC, pdVAL, pwVAH, pwPOC, pwVAL; levels that sit close
-together share one label). Markers: arrow with a letter = an entry of that variant; dot = exit
-(green win, red loss); small grey dot = a setup that was seen but skipped (bias, day limit,
-TP1 < 1 R, …). Open positions are drawn as lines: white entry, red stop, green TP1 (and TP2
-for b / d). The readout at the top left shows the OHLC under the crosshair.
+**Chart.** Symbol chips and 15m / 30m / 1h / 4h. Candles are closed bars plus the forming
+bar.
+- **EMAs.** Solid white step line = 4H EMA50; dashed = daily EMA50. Each line holds the value
+  known at the last close until the next close, so it runs through the newest candle.
+- **Bias.** The badge (LONG / SHORT / NO BIAS) and the "Bias at the last close" card show the
+  three bias conditions. Trades only go with the bias.
+- **POI zones.** Green / red translucent bands = fresh demand / supply zones (H1, M30) before
+  their first test. Amber = being tested now.
+- **TPO levels.** Dashed grey lines = prior-day / prior-week TPO levels (pdVAH, pdPOC, pdVAL,
+  pwVAH, pwPOC, pwVAL).
+- **Markers.** An arrow with a letter = an entry of that variant. A dot = an exit (green win,
+  red loss). A small grey dot = a setup that was seen but skipped (bias, day limit,
+  TP1 < 1 R, …).
+- **Open positions** are drawn as lines: white entry, red stop, green TP1 (and TP2 for b / d).
+
+*Labels.* The price axis carries only its tick prices. Every other label is a pill at the right
+edge of the chart, inside the plot, with free room kept to the right of the newest candle:
+- the last price (green / red);
+- the TPO levels and the two EMAs;
+- the position entry / stop / targets.
+
+Pills that would overlap are moved apart with a thin leader to their real price. Labels at the
+same price are merged into one pill, e.g. "pdVAL · pwVAL" or "a·b entry". On a phone the pills
+show names only; the exact values are in the readout. An EMA outside the visible price range
+is pinned to the top or bottom edge with ↑ / ↓ and its value. The readout then says "above
+chart" or "below chart".
+
+*Readout (above the chart).* For the bar under the crosshair (the newest bar when you are not
+hovering), it shows:
+- OHLC;
+- the exact 4H and daily EMA50 the rules saw at that bar's close;
+- the session VWAP (UTC day, typical price weighted by 1m volume; display only, not a rule
+  input);
+- the prior-day and prior-week TPO VAH / POC / VAL in force on that bar's UTC day.
+
+The TPO values come from the rule code itself on the same candles. Use the readout to check
+any value against another charting tool.
 
 **Positions.** One column per variant. The big number is the R **if the position were closed
 now** (net of costs, including the half already closed at TP1). The rail shows stop (−1 R),
@@ -90,3 +116,24 @@ negative in the backtest. The weekly table groups closed trades by ISO entry wee
 (alert at 70 %); notification queue (sent / pending / failed); per-symbol feed lag and the time
 one full recomputation took; the rule version of every ledger; recent events (warnings,
 divergence alerts, restarts).
+
+**Health → Independent cross-check.** A second implementation, separate from the strategy
+code, recomputes these from the stored 1m candles:
+- the OHLC bars of every timeframe;
+- every 4H / daily EMA50 point;
+- the current prior-day / week TPO levels;
+- the last 14 days of TPO levels the readout shows;
+- the bias.
+
+It compares them with what the engine computed and the dashboard draws. It also compares the
+newest 60 stored candles per symbol with Binance REST.
+
+- Green check = identical within a relative tolerance of 1e-9. In practice the differences
+  are about 1e-15, float rounding only.
+- Red cross = a mismatch. Hover the cell for details, or read the FAIL lines.
+- "–" = nothing to compare yet.
+
+It runs every 15 minutes and on "Run now". A pass → fail change sends a Telegram alert, and a
+"passes again" message follows when it recovers. The same check runs from the shell:
+`.venv/bin/flowlevels verify` (exit code 0 = pass, 1 = mismatch; `--json` prints every number).
+Neither of them writes the ledger.

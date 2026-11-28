@@ -23,9 +23,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from flowlevels.config import AppConfig
-from flowlevels.paper import notify
+from flowlevels.paper import notify, verify
 from flowlevels.paper.engine import clean, ledger_stats
 from flowlevels.paper.store import Store, now_ms
+from flowlevels.web import readout
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -158,17 +159,52 @@ def _utc(ms: int | None) -> str:
 
 
 def create_app(cfg: AppConfig, db_path: Path, data_dir: Path, demo: bool = False,
-               tg: notify.Telegram | None = None) -> FastAPI:  # fmt: skip
+               tg: notify.Telegram | None = None, rest_url: str | None = None,
+               verify_loop: bool = True) -> FastAPI:  # fmt: skip
     db = Db(db_path)
     symbols = list(cfg.iteration5.symbols)
+    fetch = verify.rest_fetcher(rest_url) if rest_url and not demo else None
+    candles = verify.Candles(data_dir, fetch)
+    vstate: dict[str, Any] = {"result": None, "running": False, "last_run": 0.0}
+    vlock = asyncio.Lock()
+
+    async def run_verify() -> dict[str, Any] | None:
+        s = db.get()
+        if s is None:
+            return None
+        async with vlock:
+            vstate["running"] = True
+            try:
+                res = await asyncio.to_thread(
+                    verify.run, cfg, s, candles, symbols, fetch is not None
+                )
+            finally:
+                vstate["running"] = False
+                vstate["last_run"] = asyncio.get_running_loop().time()
+        prev = vstate["result"]
+        vstate["result"] = res
+        if tg is not None and tg.enabled and not demo:
+            await _verify_alert(tg, prev, res)
+        return res
+
+    async def verify_loop_task() -> None:
+        await asyncio.sleep(45)
+        while True:
+            try:
+                await run_verify()
+            except Exception as exc:  # never let the check kill the web process
+                log.warning("verify error: %s", type(exc).__name__)
+            await asyncio.sleep(cfg.paper.verify_minutes * 60)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        task = None
+        tasks = []
         if tg is not None and tg.enabled and not demo:
-            task = asyncio.create_task(_watchdog(db, cfg, tg))
+            tasks.append(asyncio.create_task(_watchdog(db, cfg, tg)))
+        if verify_loop:
+            tasks.append(asyncio.create_task(verify_loop_task()))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
 
     app = FastAPI(title="flowlevels paper", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -297,10 +333,20 @@ def create_app(cfg: AppConfig, db_path: Path, data_dir: Path, demo: bool = False
             if t["status"] == "open"
         ]  # fmt: skip
         state = s.one("SELECT * FROM symbol_state WHERE symbol=?", (symbol,))
+        overlay = json.loads(ov["payload"])
+        rd: dict[str, Any] = {}
+        anchor = verify.anchor_of(s)
+        if anchor is not None:
+            try:
+                df, _ = candles.get(symbol, anchor)
+                rd = readout.for_chart(cfg, symbol, step, p["bars"], int(overlay["end"]) * 1000, df)
+            except Exception as exc:
+                log.warning("readout %s: %s", symbol, exc)
+                rd = {"error": type(exc).__name__}
         return _j({
-            **p, "overlay": json.loads(ov["payload"]), "markers": markers,
+            **p, "overlay": overlay, "markers": markers,
             "positions": open_pos, "updated_ts": r["updated_ts"],
-            "last_minute_ts": state["last_minute_ts"] if state else None,
+            "last_minute_ts": state["last_minute_ts"] if state else None, "readout": rd,
         })  # fmt: skip
 
     @app.get("/api/positions")
@@ -404,7 +450,19 @@ def create_app(cfg: AppConfig, db_path: Path, data_dir: Path, demo: bool = False
             "telegram_web": bool(tg and tg.enabled), "demo": demo,
             "versions": variants(s),
             "stall_minutes": cfg.paper.stall_alert_minutes,
+            "verify": _verify_view(vstate, cfg),
         })  # fmt: skip
+
+    @app.get("/api/verify")
+    def verify_get() -> JSONResponse:
+        return _j(_verify_view(vstate, cfg))
+
+    @app.post("/api/verify/run")
+    async def verify_run() -> JSONResponse:
+        loop_t = asyncio.get_running_loop().time()
+        if not vstate["running"] and loop_t - vstate["last_run"] >= 20:
+            await run_verify()
+        return _j(_verify_view(vstate, cfg))
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket) -> None:
@@ -434,6 +492,32 @@ def create_app(cfg: AppConfig, db_path: Path, data_dir: Path, demo: bool = False
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+def _verify_view(vstate: dict[str, Any], cfg: AppConfig) -> dict[str, Any]:
+    return {
+        "result": vstate["result"],
+        "running": vstate["running"],
+        "every_min": cfg.paper.verify_minutes,
+    }
+
+
+async def _verify_alert(tg: notify.Telegram, prev: dict[str, Any] | None,
+                        res: dict[str, Any] | None) -> None:  # fmt: skip
+    """Telegram on a pass -> fail transition (and when it passes again)."""
+    if res is None:
+        return
+    was = prev["ok"] if prev else None
+    if res["ok"] is False and was is not False:
+        bad = [
+            f"{x['symbol']}: " + ", ".join(c["name"] for c in x["checks"] if c["ok"] is False)
+            + (f" ({x['note']})" if x.get("note") and not x["checks"] else "")
+            for x in res["symbols"] if x["ok"] is False
+        ]  # fmt: skip
+        await tg.send("<b>Cross-check FAILED</b> (engine vs independent recomputation): "
+                      + "; ".join(bad)[:600] + ". See Health → Cross-check.")  # fmt: skip
+    elif res["ok"] is True and was is False:
+        await tg.send("<b>Cross-check passes again</b>.")
 
 
 def _trade_row(t: dict[str, Any]) -> dict[str, Any]:

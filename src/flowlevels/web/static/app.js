@@ -1,6 +1,6 @@
 // Paper Terminal: single-page dashboard (no build step). Data from the read-only API; live
 // refresh when the WebSocket reports a database change.
-import { token, precision, baseChart, candles, emaSeries, Bands, poiBand, priceLine, sparkline } from "./charts.js";
+import { token, precision, baseChart, candles, emaSeries, Bands, poiBand, priceLine, sparkline, PaneLabels, stepTo, valueAt } from "./charts.js";
 
 // ------------------------------------------------------------------ icons
 const I = {
@@ -37,6 +37,16 @@ function fPx(symbol, x) {
   const p = precision(symbol, x);
   return x.toLocaleString("en-US", { minimumFractionDigits: p, maximumFractionDigits: p });
 }
+// Full value for the verification readout: price precision + up to `extra` more decimals
+// (trailing zeros dropped), so computed values (EMA, VWAP, TPO mid rows) are shown exactly.
+function fExact(symbol, x, extra = 3) {
+  if (x == null || !isFinite(x)) return "–";
+  const p = precision(symbol, x);
+  let [ip, dp = ""] = Math.abs(x).toFixed(p + extra).split(".");
+  while (dp.length > p && dp.endsWith("0")) dp = dp.slice(0, -1);
+  return (x < 0 ? "−" : "") + Number(ip).toLocaleString("en-US") + (dp ? "." + dp : "");
+}
+const TF_S = { "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400 };
 function fTime(ms, withYear = false) {
   if (!ms) return "–";
   const d = new Date(ms);
@@ -177,8 +187,8 @@ const ChartPage = {
         <div id="bias-badge">${skel(36, "132px")}</div>
       </div>
       <div class="split">
-        <div style="min-width:0"><div class="chart-wrap"><div class="chart-el" id="chart"></div><div class="ohlc" id="ohlc"></div></div>
-          <div class="legend"><span><i style="border-color:${token("--green")}"></i>▲▼ entry (variant)</span><span><i style="border-color:${token("--ema4")}"></i>4H EMA50</span><span><i class="dash" style="border-color:${token("--emad")}"></i>Daily EMA50</span><span><i class="box" style="border-color:${token("--zone-long-edge")};background:${token("--zone-long")}"></i>Demand POI</span><span><i class="box" style="border-color:${token("--zone-short-edge")};background:${token("--zone-short")}"></i>Supply POI</span><span><i class="dash" style="border-color:${token("--level")}"></i>TPO level</span><span><i class="box" style="border-color:${token("--muted")};border-radius:50%;width:10px"></i>skipped setup</span></div>
+        <div style="min-width:0"><div class="readout" id="ohlc"></div><div class="chart-wrap"><div class="chart-el" id="chart"></div></div>
+          <div class="legend"><span><i style="border-color:${token("--green")}"></i>▲▼ entry (variant)</span><span><i style="border-color:${token("--ema4")}"></i>4H EMA50</span><span><i class="dash" style="border-color:${token("--emad")}"></i>Daily EMA50</span><span><i class="box" style="border-color:${token("--zone-long-edge")};background:${token("--zone-long")}"></i>Demand POI</span><span><i class="box" style="border-color:${token("--zone-short-edge")};background:${token("--zone-short")}"></i>Supply POI</span><span><i class="dash" style="border-color:${token("--level")}"></i>TPO level</span><span>↑↓ value off-scale</span><span><i class="box" style="border-color:${token("--muted")};border-radius:50%;width:10px"></i>skipped setup</span></div>
         </div>
         <div class="grid" id="side">${skel(180)}${skel(120)}</div>
       </div></div>`;
@@ -200,25 +210,77 @@ const ChartPage = {
     this.fit = true;
     this.lines = [];
     this.bands = new Bands();
+    this.labels = new PaneLabels();
+    this.idx = new Map();
     this.chart.subscribeCrosshairMove((p) => this.ohlc(p));
     await this.refresh();
   },
+  paneH() {
+    const el = this.el.querySelector("#chart");
+    return el && this.chart ? el.clientHeight - this.chart.timeScale().height() : null;
+  },
+  // Readout of the hovered bar (the newest bar when not hovering): OHLC plus the exact values
+  // the rules saw at that bar's close. EMA50s come from the engine payload; the TPO levels of
+  // that UTC day and the session VWAP come from /api/chart readout (rule code, same candles).
   ohlc(param) {
     const box = this.el.querySelector("#ohlc");
-    if (!box || !this.data) return;
-    let bar = null;
-    if (param && param.time && this.cs) bar = param.seriesData.get(this.cs);
-    if (!bar) {
-      const b = this.data.bars[this.data.bars.length - 1];
-      if (!b) { box.innerHTML = ""; return; }
-      bar = { open: b[1], high: b[2], low: b[3], close: b[4] };
-    }
-    const ch = (bar.close - bar.open) / bar.open;
-    const f = (x) => fPx(this.symbol, x);
-    box.innerHTML = `<b>${short(this.symbol)}/USDT · ${this.tf}</b>
-      <span><span class="k">O</span>${f(bar.open)}</span><span><span class="k">H</span>${f(bar.high)}</span>
-      <span><span class="k">L</span>${f(bar.low)}</span><span><span class="k">C</span><b>${f(bar.close)}</b></span>
-      <span class="${cls(ch)}">${sgn(100 * ch, 2)}%</span>`;
+    const d = this.data;
+    if (!box) return;
+    if (!d || !d.bars.length) { box.innerHTML = ""; return; }
+    let i = d.bars.length - 1;
+    if (param && param.time != null && this.idx.has(param.time)) i = this.idx.get(param.time);
+    const b = d.bars[i];
+    const sym = this.symbol;
+    const tc = Math.min(b[0] + TF_S[this.tf], d.overlay.end);
+    const f = (x) => fPx(sym, x), fx = (x) => fExact(sym, x);
+    const ch = (b[4] - b[1]) / b[1];
+    const rd = d.readout || {};
+    const lv = (rd.levels || {})[String(Math.floor(b[0] / 86400) * 86400)] || [];
+    const e4 = valueAt(d.ema4, tc), ed = valueAt(d.emad, tc);
+    const vw = rd.vwap ? rd.vwap[i] : null;
+    const H = this.paneH();
+    const off = (v) => {
+      const y = v == null || !this.cs ? null : this.cs.priceToCoordinate(v);
+      if (y == null || !H) return "";
+      return y < 0 ? '<span class="off">▲ above chart</span>' : y > H ? '<span class="off">▼ below chart</span>' : "";
+    };
+    const kv = (k, v, extra = "") => `<span class="kvp"><span class="k">${k}</span>${v}${extra}</span>`;
+    const tri = (a, b2, c) => (a == null ? "–" : `${fx(a)} / ${fx(b2)} / ${fx(c)}`);
+    box.innerHTML = `<div class="rl"><b>${short(sym)}/USDT · ${this.tf}</b><span class="muted">${fTime(b[0] * 1000)}${i === d.bars.length - 1 ? " · forming" : ""}</span>
+        ${kv("O", f(b[1]))}${kv("H", f(b[2]))}${kv("L", f(b[3]))}${kv("C", `<b>${f(b[4])}</b>`)}<span class="${cls(ch)}">${sgn(100 * ch, 2)}%</span></div>
+      <div class="rl">${kv("4H EMA50", fx(e4), off(e4))}${kv("D EMA50", fx(ed), off(ed))}${kv("VWAP", fx(vw))}</div>
+      <div class="rl">${kv("pd VAH/POC/VAL", tri(lv[0], lv[1], lv[2]))}${kv("pw VAH/POC/VAL", tri(lv[3], lv[4], lv[5]))}</div>`;
+  },
+  // Initial view: readable bar spacing and free room on the right for the price labels.
+  paneW() {
+    const el = this.el.querySelector("#chart");
+    return el ? el.clientWidth - (this.chart.priceScale("right").width() || 70) : 0;
+  },
+  view(n) {
+    const W = this.paneW();
+    if (!W) return;
+    const nv = Math.min(n, Math.max(40, Math.floor(W / (W < 560 ? 3.5 : 2.5))));
+    const px = this.labels.maxWidth(this.paneH()) + 26; // + leader lines
+    const extra = Math.ceil((px * nv) / Math.max(W - px, 80));
+    this.chart.timeScale().setVisibleLogicalRange({ from: n - nv - 0.5, to: n - 1 + extra });
+    this.fitLabels(3);
+  },
+  // Keep the newest candle left of the price labels while the latest bars are in view: the
+  // labels' width depends on the price scale, which follows the visible bars, so re-measure
+  // after drawing and shift the view (zoom unchanged) until it fits.
+  fitLabels(tries = 2) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!this.chart || !this.data) return;
+      const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange(), W = this.paneW();
+      const n = this.data.bars.length;
+      if (!r || !W || r.to < n - 1) return; // scrolled back in history: leave the view alone
+      const bs = W / (r.to - r.from);
+      const need = (this.labels.maxWidth(this.paneH()) + 26) / bs;
+      const have = r.to - (n - 1);
+      if (Math.abs(need - have) < 1) return;
+      ts.setVisibleLogicalRange({ from: r.from + need - have, to: r.to + need - have });
+      if (tries > 1) this.fitLabels(tries - 1);
+    }));
   },
   async refresh() {
     const sym = this.symbol, tf = this.tf;
@@ -240,6 +302,7 @@ const ChartPage = {
       if (this.cs) { this.chart.removeSeries(this.cs); this.chart.removeSeries(this.e4); this.chart.removeSeries(this.ed); }
       this.cs = candles(this.chart, sym, last);
       this.cs.attachPrimitive(this.bands);
+      this.cs.attachPrimitive(this.labels);
       this.e4 = emaSeries(this.chart, "4h");
       this.ed = emaSeries(this.chart, "d");
       this.csSym = sym;
@@ -247,29 +310,38 @@ const ChartPage = {
     }
     const bars = d.bars.map((b) => ({ time: b[0], open: b[1], high: b[2], low: b[3], close: b[4] }));
     this.cs.setData(bars);
-    this.e4.setData(d.ema4.map((x) => ({ time: x[0], value: x[1] })));
-    this.ed.setData(d.emad.map((x) => ({ time: x[0], value: x[1] })));
     const times = bars.map((b) => b.time);
-    this.bands.set(d.overlay.pois.map(poiBand), times);
+    this.idx = new Map(times.map((x, i) => [x, i]));
+    const lastT = times[times.length - 1];
+    this.e4.setData(stepTo(d.ema4, lastT)); // value in force until the next 4H / daily close
+    this.ed.setData(stepTo(d.emad, lastT));
     for (const l of this.lines) this.cs.removePriceLine(l);
     this.lines = [];
-    // TPO levels; levels closer than ~1.2% of the visible range share one label (no overlap)
-    const hiP = Math.max(...bars.map((b) => b.high)), loP = Math.min(...bars.map((b) => b.low));
-    const gap = (hiP - loP) * 0.025;
-    const lvls = [...d.overlay.levels].sort((a, b) => a.price - b.price);
-    const groups = [];
-    for (const lv of lvls) {
-      const g = groups[groups.length - 1];
-      if (g && lv.price - g.last < gap) { g.names.push(lv.name); g.last = lv.price; g.prices.push(lv.price); } else groups.push({ names: [lv.name], last: lv.price, prices: [lv.price] });
+    // Lines carry no axis label (it would cover the axis ticks). Names and prices are drawn
+    // as pills at the pane's right edge (PaneLabels: merged or offset, never overlapping).
+    const items = [];
+    for (const lv of d.overlay.levels) {
+      this.lines.push(priceLine(this.cs, lv.price, token("--level"), "", 2, false));
+      items.push({ price: lv.price, name: lv.name, text: fPx(sym, lv.price), bg: token("--surface-3"), fg: token("--text-2"), lc: token("--level"), group: "tpo", mergePx: 4, prio: 1 });
     }
-    for (const g of groups) g.prices.forEach((pr, i) => this.lines.push(priceLine(this.cs, pr, token("--level"), i === 0 ? g.names.join(" · ") : "", 2, i === 0)));
+    const cur = (pts) => (pts.length ? pts[pts.length - 1][1] : null);
+    const e4v = cur(d.ema4), edv = cur(d.emad);
+    if (e4v != null) items.push({ price: e4v, name: "4H EMA", text: fPx(sym, e4v), bg: token("--ema4"), fg: token("--bg"), clamp: true, prio: 2 });
+    if (edv != null) items.push({ price: edv, name: "D EMA", text: fPx(sym, edv), bg: token("--emad"), fg: token("--bg"), clamp: true, prio: 2 });
     for (const p of d.positions) {
-      const tag = p.variant;
-      this.lines.push(priceLine(this.cs, p.entry, token("--text"), `${tag} entry`, 0, true, 1));
-      this.lines.push(priceLine(this.cs, p.stop, token("--red"), `${tag} stop`, 0, true, 1));
-      if (!p.tp1_hit) this.lines.push(priceLine(this.cs, p.tp1, token("--green"), `${tag} TP1`, 0, true, 1));
-      if (p.tp2 != null && p.exit2 === "lvl") this.lines.push(priceLine(this.cs, p.tp2, token("--green"), `${tag} TP2`, 2, true, 1));
+      const add = (price, name, color, style) => {
+        this.lines.push(priceLine(this.cs, price, color, "", style, false, 1));
+        items.push({ price, tag: p.variant, name, text: fPx(sym, price), bg: color, fg: token("--bg"), prio: 3, group: "pos-" + name, exact: true });
+      };
+      add(p.entry, "entry", token("--text"), 0);
+      add(p.stop, "stop", token("--red"), 0);
+      if (!p.tp1_hit) add(p.tp1, "TP1", token("--green"), 0);
+      if (p.tp2 != null && p.exit2 === "lvl") add(p.tp2, "TP2", token("--green"), 2);
     }
+    const lb = d.bars[d.bars.length - 1];
+    if (lb) items.push({ price: lb[4], name: "", text: fPx(sym, lb[4]), bg: lb[4] >= lb[1] ? token("--green") : token("--red"), fg: token("--bg"), prio: 9, price_always: true });
+    this.labels.set(items, this.el.querySelector("#chart").clientWidth < 560);
+    this.bands.set(d.overlay.pois.map(poiBand), times, () => this.labels.drawnWidth ?? this.labels.maxWidth());
     const t0 = times[0] || 0;
     const seenSig = new Set();
     const mk = d.markers.filter((m) => m.time >= t0).filter((m) => {
@@ -284,7 +356,7 @@ const ChartPage = {
       return { time: m.time, position: m.position, shape: "circle", color: token("--muted"), text: "", size: 0.5 };
     });
     this.cs.setMarkers(mk);
-    if (this.fit) { this.chart.timeScale().fitContent(); this.chart.timeScale().scrollToRealTime(); this.fit = false; }
+    if (this.fit) { this.view(bars.length); this.fit = false; } else this.fitLabels();
     this.ohlc(null);
     this.side(d);
   },
@@ -308,7 +380,7 @@ const ChartPage = {
       ? d.positions.map((p) => `<div class="row">${vtag(p.variant, "", p.color)}${side(p.dir)}<span class="grow muted num">${fPx(this.symbol, p.entry)}</span><span class="right num ${cls(p.net_r)}" data-f="cp${p.id}" data-v="${p.net_r}">${fR(p.net_r)}</span></div>`).join("")
       : empty("No open position", `No paper position on ${short(this.symbol)}.`, true);
     const pois = ov.pois.length
-      ? ov.pois.slice(0, 8).map((p) => `<div class="row"><span class="badge ${p.dir > 0 ? "long" : "short"}">${p.dir > 0 ? "DEMAND" : "SUPPLY"}</span><span class="grow text-2">${esc(p.kind.replace("_", " "))}</span><span class="num muted">${fPx(this.symbol, p.near)}${p.near !== p.far ? "–" + fPx(this.symbol, p.far) : ""}</span>${p.state === "testing" ? '<span class="badge pending">TESTING</span>' : ""}</div>`).join("")
+      ? ov.pois.slice(0, 8).map((p) => `<div class="row poi-row"><span class="badge ${p.dir > 0 ? "long" : "short"}">${p.dir > 0 ? "DEMAND" : "SUPPLY"}</span><div class="grow"><div class="text-2">${esc(p.kind.replace("_", " "))}${p.state === "testing" ? ' <span class="badge pending testing">TESTING</span>' : ""}</div><div class="num muted px">${fPx(this.symbol, p.near)}${p.near !== p.far ? " – " + fPx(this.symbol, p.far) : ""}</div></div></div>`).join("")
       : empty("No fresh POI", "All POIs in range have had their first test.", true);
     this.el.querySelector("#side").innerHTML = `
       <div class="card"><div class="card-head"><h3>Bias at the last close</h3></div><div class="rows">${checks || empty("Not enough data", "", true)}</div>${vals}</div>
@@ -470,7 +542,8 @@ const Sheet = {
     const second = t.exit2 === "lvl" ? (t.tp2 != null ? f(t.tp2) : "none → stop/time") : "1.5 × ATR trail";
     const reasons = t.reasons.map((r) => `<li><span class="check ${r.ok ? "ok" : "no"}">${r.ok ? I.check : I.dash}</span><span class="rule">${esc(r.rule)}</span><span class="txt num">${esc(r.text)}</span></li>`).join("");
     sh.querySelector(".sheet-body").innerHTML = `
-      <div class="trade-chart"><div class="chart-el" id="tchart"></div><div class="ohlc"><b>${short(t.symbol)}/USDT · ${t.chart?.tf || ""}</b><span class="muted">entry ${fTime(t.entry_ts, true)}</span></div></div>
+      <div class="readout compact"><div class="rl"><b>${short(t.symbol)}/USDT · ${t.chart?.tf || ""}</b><span class="muted">entry ${fTime(t.entry_ts, true)}</span></div></div>
+      <div class="trade-chart"><div class="chart-el" id="tchart"></div></div>
       <div class="legend" style="padding-top:0;margin-top:-8px"><span><i class="box" style="border-color:${token("--amber")};background:${token("--amber")}"></i>${t.trigger === "T1" ? "sweep, close-back" : "touch, " + esc(t.pattern || "confirmation")} (30m)</span><span>${t.direction > 0 ? "▲" : "▼"} entry</span><span>● exits (x1 half, x2 rest)</span><span><i class="box" style="border-color:${token(t.direction > 0 ? "--zone-long-edge" : "--zone-short-edge")};background:${token(t.direction > 0 ? "--zone-long" : "--zone-short")}"></i>POI</span></div>
       <div class="card"><div class="kv">
         <div><span class="label">Net result</span><span class="v ${cls(t.net_r)}"><b>${fR(t.net_r)}</b></span></div>
@@ -501,19 +574,32 @@ const Sheet = {
     this.ch = ch;
     const bars = c.bars.map((b) => ({ time: b[0], open: b[1], high: b[2], low: b[3], close: b[4] }));
     const s = candles(ch, t.symbol, t.entry);
+    s.applyOptions({ priceLineVisible: false }); // a past trade: no "last price" line
     s.setData(bars);
     const e4 = emaSeries(ch, "4h"), ed = emaSeries(ch, "d");
-    e4.setData(c.ema4.map((x) => ({ time: x[0], value: x[1] })));
-    ed.setData(c.emad.map((x) => ({ time: x[0], value: x[1] })));
+    const ts = bars.map((b) => b.time);
+    e4.setData(stepTo(c.ema4, ts[ts.length - 1]));
+    ed.setData(stepTo(c.emad, ts[ts.length - 1]));
     const bands = new Bands();
     s.attachPrimitive(bands);
-    const ts = bars.map((b) => b.time);
+    const labels = new PaneLabels();
+    s.attachPrimitive(labels);
+    const items = [];
+    const add = (price, name, color, style, prio = 3) => {
+      priceLine(s, price, color, "", style, false, 1);
+      items.push({ price, name, text: fPx(t.symbol, price), bg: color, fg: token("--bg"), prio });
+    };
+    add(t.entry, "entry", token("--text"), 0);
+    add(t.stop, "stop", token("--red"), 0);
+    add(t.tp1, "TP1", token("--green"), 0);
+    if (t.tp2 != null && t.exit2 === "lvl") add(t.tp2, "TP2", token("--green"), 2);
+    if (c.swing != null && t.trigger === "T1") add(c.swing, "15m swing", token("--muted"), 1, 1);
+    for (const [pts, name, col] of [[c.ema4, "4H EMA", "--ema4"], [c.emad, "D EMA", "--emad"]]) {
+      const v = valueAt(pts, ts[ts.length - 1]);
+      if (v != null) items.push({ price: v, name, text: fPx(t.symbol, v), bg: token(col), fg: token("--bg"), clamp: true, prio: 2 });
+    }
+    labels.set(items, el.clientWidth < 560);
     bands.set(c.pois.map((p) => ({ ...poiBand({ ...p, dir: t.direction, state: "fresh", from: c.a_ts - 6 * 1800, to: null }), label: "" })), ts);
-    priceLine(s, t.entry, token("--text"), "entry", 0, true, 1);
-    priceLine(s, t.stop, token("--red"), "stop", 0, true, 1);
-    priceLine(s, t.tp1, token("--green"), "TP1", 0, true, 1);
-    if (t.tp2 != null && t.exit2 === "lvl") priceLine(s, t.tp2, token("--green"), "TP2", 2, true, 1);
-    if (c.swing != null && t.trigger === "T1") priceLine(s, c.swing, token("--muted"), "15m swing", 1, false, 1);
     const step = c.tf === "15m" ? 900 : 1800;
     const snap = (ms) => Math.floor(ms / 1000 / step) * step;
     const d = t.direction;
@@ -532,7 +618,8 @@ const Sheet = {
     const i0 = Math.max(0, ts.findIndex((x) => x >= c.a_ts) - 50);
     let i1 = ts.findIndex((x) => x >= endT);
     i1 = i1 < 0 ? ts.length - 1 : Math.min(ts.length - 1, i1 + 20);
-    ch.timeScale().setVisibleLogicalRange({ from: i0, to: Math.max(i1, i0 + 60) + 4 });
+    const to = Math.max(i1, i0 + 60), W = el.clientWidth - 70, px = labels.maxWidth() + 10;
+    ch.timeScale().setVisibleLogicalRange({ from: i0, to: to + Math.ceil((px * (to - i0)) / Math.max(W - px, 80)) });
   },
   close(silent) {
     const sh = document.getElementById("sheet"), sc = document.getElementById("scrim");
@@ -631,6 +718,42 @@ const PerformancePage = {
 };
 
 // ------------------------------------------------------------------ health page
+// Independent cross-check (flowlevels.paper.verify): engine values vs a separate implementation.
+const CHECK_COLS = [
+  ["candles_vs_rest", "Candles vs REST"], ["bars", "Bars"], ["ema50_4h", "4H EMA50"], ["ema50_1d", "D EMA50"],
+  ["tpo_now", "TPO now"], ["tpo_history", "TPO history"], ["bias", "Bias"],
+];
+function verifyCard(v) {
+  v = v || {};
+  const r = v.result;
+  const badge = r == null ? `<span class="badge pending">${v.running ? "RUNNING" : "PENDING"}</span>`
+    : r.ok === true ? '<span class="badge win">PASS</span>' : r.ok === false ? '<span class="badge loss">FAIL</span>' : '<span class="badge">NO DATA</span>';
+  const cell = (c) => {
+    if (!c) return '<td class="c muted">–</td>';
+    const tip = `n=${c.n} · max rel. diff ${c.max_rel.toExponential(1)}${c.detail ? " · " + c.detail : ""}`;
+    if (c.ok == null) return `<td class="c muted" title="${esc(tip)}">–</td>`;
+    return `<td class="c" title="${esc(tip)}"><span class="check ${c.ok ? "ok" : "bad"}">${c.ok ? I.check : I.close}</span></td>`;
+  };
+  const rows = r ? r.symbols.map((x) => {
+    const by = Object.fromEntries((x.checks || []).map((c) => [c.name, c]));
+    return `<tr><td><b>${short(x.symbol)}</b></td>${CHECK_COLS.map(([k]) => cell(by[k])).join("")}</tr>`;
+  }).join("") : "";
+  const fails = r ? r.symbols.flatMap((x) => [
+    ...(x.note ? [`<b>${short(x.symbol)}</b> ${esc(x.note)}`] : []),
+    ...(x.checks || []).filter((c) => c.ok === false).map((c) => `<b>${short(x.symbol)}</b> ${esc(c.name)}: ${esc(c.detail)}`),
+  ]) : [];
+  const mx = r ? Math.max(0, ...r.symbols.flatMap((x) => (x.checks || []).map((c) => c.max_rel))) : null;
+  const ago = r ? fAgo((Date.now() - r.ts) / 1000) + " ago" : "–";
+  return `<div class="card" id="verify"><div class="card-head"><h3>Independent cross-check</h3>${badge}<span class="spacer muted" style="font-size:12px">${r ? ago : ""}</span><button class="btn small" id="verify-run"${v.running ? " disabled" : ""}>Run now</button></div>
+    <p class="muted note">Bars, 4H/daily EMA50, prior-day/week TPO levels and the bias are recomputed from the stored candles by a separate implementation (not the strategy code) and compared with what the engine computed and this dashboard shows; the newest stored candles are compared with Binance REST. Runs every ${v.every_min || 15} min; CLI: <code>flowlevels verify</code>.</p>
+    ${r ? `<div class="table-wrap"><table class="verify"><thead><tr><th>Symbol</th>${CHECK_COLS.map(([, n]) => `<th class="c">${n}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="kv" style="margin-top:12px"><div><span class="label">Last run (UTC)</span><span class="v">${fTime(r.ts)}</span></div>
+      <div><span class="label">Max rel. difference</span><span class="v num">${mx.toExponential(1)}</span></div>
+      <div><span class="label">Tolerance</span><span class="v num">${r.rel_tol.toExponential(0)}</span></div>
+      <div><span class="label">REST check</span><span class="v">${r.rest ? "on" : "off (demo)"}</span></div></div>
+    ${fails.length ? `<div class="rows" style="margin-top:12px">${fails.map((x) => `<div class="row"><span class="badge loss">FAIL</span><span class="grow text-2" style="font-size:13px">${x}</span></div>`).join("")}</div>` : ""}`
+    : empty("First check pending", "The first run starts about a minute after the dashboard starts.", true)}</div>`;
+}
 const HealthPage = {
   async mount(el) {
     this.el = el;
@@ -674,6 +797,7 @@ const HealthPage = {
             <div><span class="label">Failed</span><span class="v ${nt.failed ? "neg" : ""}">${nt.failed || 0}</span></div><div><span class="label">Not sent (no token)</span><span class="v muted">${nt.disabled || 0}</span></div>
             <div><span class="label">Last sent</span><span class="v">${fTime(d.last_sent_ms)}</span></div></div></div>
       </div>
+      ${verifyCard(d.verify)}
       <div class="split">
         <div class="card"><div class="card-head"><h3>Data feed (Binance USD-M 1m klines)</h3><span class="spacer muted" style="font-size:12px">stall alert after ${d.stall_minutes} min</span></div>
           ${sym ? `<div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Last closed (UTC)</th><th class="r">Lag</th><th class="r">Compute</th><th>Bias</th><th>Updated</th></tr></thead><tbody>${sym}</tbody></table></div>` : empty("No data yet", "The engine has not written any symbol state.")}</div>
@@ -681,6 +805,11 @@ const HealthPage = {
       </div>
       <div class="card"><div class="card-head"><h3>Recent events</h3></div><div class="rows">${ev}</div></div>`;
     flash(this.el);
+    const btn = this.el.querySelector("#verify-run");
+    if (btn) btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "Running…";
+      try { await fetch("/api/verify/run", { method: "POST" }); } finally { this.refresh(); }
+    };
   },
   destroy() {},
 };

@@ -662,10 +662,60 @@ def _cmd_web(args: argparse.Namespace) -> int:
     db = Path(args.db) if args.db else settings.data_dir / "paper" / "paper.sqlite"
     tok = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
     tg = None if args.demo else notify.Telegram(tok, settings.telegram_chat_id)
-    app = create_app(cfg, db, settings.data_dir, demo=args.demo, tg=tg)
+    app = create_app(cfg, db, settings.data_dir, demo=args.demo, tg=tg,
+                     rest_url=settings.binance_rest_url)  # fmt: skip
     port = args.port or settings.api_port
     uvicorn.run(app, host=settings.api_host, port=port, log_level="warning", access_log=False)
     return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """Independent cross-check of the paper engine's chart values (read-only).
+
+    Recomputes bars, 4H/daily EMA50, TPO levels and the bias with a separate implementation
+    and compares them with the engine's chart cache. It also compares the stored 1m candles
+    with Binance REST. Exit codes: 0 = pass, 1 = a mismatch, 2 = nothing to compare yet."""
+    import json
+    from pathlib import Path
+
+    from flowlevels.paper import notify, verify
+    from flowlevels.paper.store import Store
+
+    settings, cfg = _setup()
+    notify.quiet_http_logs()
+    db = Path(args.db) if args.db else settings.data_dir / "paper" / "paper.sqlite"
+    if not db.exists():
+        print(f"No paper database at {db}")
+        return 2
+    store = Store(db, readonly=True)
+    fetch = None if args.no_rest else verify.rest_fetcher(settings.binance_rest_url)
+    candles = verify.Candles(settings.data_dir, fetch)
+    syms = args.symbols or list(cfg.iteration5.symbols)
+    res = verify.run(cfg, store, candles, syms, rest=fetch is not None,
+                     history_days=args.history_days)  # fmt: skip
+    if args.json:
+        print(json.dumps(res, indent=1, default=str))
+    else:
+        names = [c["name"] for x in res["symbols"] for c in x["checks"]]
+        cols = list(dict.fromkeys(names))
+        mark = {True: "ok", False: "FAIL", None: "-"}
+        print(f"{'symbol':<9}" + "".join(f"{c:>17}" for c in cols))
+        for x in res["symbols"]:
+            by = {c["name"]: c for c in x["checks"]}
+            cells = [f"{mark[by[c]['ok']]} n={by[c]['n']}" if c in by else "-" for c in cols]
+            print(f"{x['symbol']:<9}" + "".join(f"{v:>17}" for v in cells))
+        for x in res["symbols"]:
+            if x.get("note"):
+                print(f"{x['symbol']}: {x['note']}")
+            for c in x["checks"]:
+                if c["ok"] is False:
+                    print(f"{x['symbol']} {c['name']}: {c['detail']}")
+        mx = max((c["max_rel"] for x in res["symbols"] for c in x["checks"]), default=0.0)
+        verdict = {True: "PASS", False: "FAIL", None: "NOTHING TO COMPARE"}[res["ok"]]
+        print(f"{verdict} - max relative difference {mx:.2e} (tolerance {res['rel_tol']:.0e}), "
+              f"REST {'on' if res['rest'] else 'off'}, {res['duration_s']} s")  # fmt: skip
+    store.close()
+    return {True: 0, False: 1, None: 2}[res["ok"]]
 
 
 def _cmd_telegram_test(args: argparse.Namespace) -> int:
@@ -815,6 +865,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=None)
     p.add_argument("--demo", action="store_true", help="label as DEMO data (demo database)")
     add("telegram-test", _cmd_telegram_test, "Send one Telegram test message (.env settings)")
+    p = add("verify", _cmd_verify, "Independent cross-check of the engine's chart values")
+    p.add_argument("--db", default=None)
+    p.add_argument("--symbols", nargs="+", default=None)
+    p.add_argument("--no-rest", action="store_true", help="skip the Binance REST candle check")
+    p.add_argument("--history-days", type=int, default=None)
+    p.add_argument("--json", action="store_true")
     p = add("paper-demo-db", _cmd_paper_demo_db, "DEMO dashboard database from window B")
     p.add_argument("--out", default="data/paper/demo")
     p.add_argument(
