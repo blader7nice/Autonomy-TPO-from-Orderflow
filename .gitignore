@@ -1,0 +1,23 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+/data/
+dist/
+build/
+*.egg-info/
+node_modules/
+web/dist/
+
+# Owner imports (read-only inputs; raw logs may contain wallet addresses). Never commit.
+/home/flow/import/
+import/
+*signal_log*.csv
+*trade_log*.csv
+
+# Playwright browser + local libs for screenshot QA (never committed)
+/.cache/

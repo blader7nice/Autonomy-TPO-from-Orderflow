@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0e11">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Paper Terminal</title>
+  <link rel="preload" href="/static/vendor/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/vendor/inter-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315203a'/%3E%3Cpath d='M9 21V11M9 14h-2M9 18h2M16 24V8M16 12h-2M16 19h2M23 20v-9M23 14h-2M23 17h2' stroke='%236aa1ff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 16V8M6 10H4M6 14h2M12 19V5M12 8h-2M12 14h2M18 15V9M18 11h-2M18 13h2"/></svg></div>
+        <div><div class="brand-name">Paper Terminal</div><div class="brand-sub">ITERATION-5 forward test</div></div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-foot" id="side-foot"></div>
+    </aside>
+    <header class="statusbar" id="statusbar"></header>
+    <main id="view"></main>
+    <nav class="tabbar" id="tabbar"></nav>
+  </div>
+  <div class="scrim" id="scrim" hidden></div>
+  <section class="sheet" id="sheet" aria-modal="true" role="dialog" hidden></section>
+  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

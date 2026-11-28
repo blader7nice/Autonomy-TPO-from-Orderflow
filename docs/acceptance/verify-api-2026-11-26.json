@@ -1,0 +1,266 @@
+[
+  {
+    "name": "vision_aggTrades",
+    "ok": true,
+    "detail": {
+      "url": "data/futures/um/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-11-24.zip",
+      "checksum_file": "ae35cb79202b3c7fdc074550a0b486b4f28816e8dfbe612741e24e487fea1bb2  BTCUSDT-aggTrades-2026-11-24.zip",
+      "checksum_parsed": "ae35cb79202b3c7fdc074550a0b486b4f28816e8dfbe612741e24e487fea1bb2",
+      "checksum_is_sha256sum_format": true,
+      "zip_members": [
+        "BTCUSDT-aggTrades-2026-11-24.csv"
+      ],
+      "has_header": true,
+      "first_line": "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker",
+      "n_columns": 7,
+      "rows": 2462147,
+      "ts_first": 1795478400047,
+      "ts_unit_ms": true,
+      "ids_contiguous": true
+    }
+  },
+  {
+    "name": "vision_klines",
+    "ok": true,
+    "detail": {
+      "url": "data/futures/um/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2026-11-24.zip",
+      "checksum_file": "f165fc01d051e306364a66d6714c98105eb5b976f4663243ee1ff206bd97e920  BTCUSDT-1m-2026-11-24.zip",
+      "checksum_parsed": "f165fc01d051e306364a66d6714c98105eb5b976f4663243ee1ff206bd97e920",
+      "checksum_is_sha256sum_format": true,
+      "zip_members": [
+        "BTCUSDT-1m-2026-11-24.csv"
+      ],
+      "has_header": true,
+      "first_line": "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore",
+      "n_columns": 12,
+      "rows": 1440
+    }
+  },
+  {
+    "name": "aggressor_m_semantics",
+    "ok": true,
+    "detail": {
+      "minutes": 1440,
+      "match_rate_m_true_is_seller": 0.907639,
+      "match_rate_m_true_is_buyer": 0.0,
+      "day_buy_volume": 117946.8,
+      "day_kline_taker_buy_volume": 117946.8,
+      "day_totals_equal": true
+    }
+  },
+  {
+    "name": "vision_vs_rest",
+    "ok": true,
+    "detail": {
+      "compared": 1000,
+      "identical": 1000
+    }
+  },
+  {
+    "name": "ws_legacy_unrouted_is_silent",
+    "ok": true,
+    "detail": {
+      "url": "wss://fstream.binance.com/stream?streams=btcusdt@aggTrade",
+      "messages": 0,
+      "error": null,
+      "seconds": 15.0
+    }
+  },
+  {
+    "name": "ws_stream",
+    "ok": true,
+    "detail": {
+      "url": "wss://fstream.binance.com/market/stream?streams=btcusdt@aggTrade/btcusdt@forceOrder/!forceOrder@arr",
+      "error": null,
+      "frames": 525,
+      "streams_seen": [
+        "!forceOrder@arr",
+        "btcusdt@aggTrade"
+      ],
+      "n_trades": 519,
+      "aggTrade_keys": [
+        "E",
+        "T",
+        "a",
+        "e",
+        "f",
+        "l",
+        "m",
+        "nq",
+        "p",
+        "q",
+        "s",
+        "st"
+      ],
+      "sample_frame": {
+        "stream": "btcusdt@aggTrade",
+        "data": {
+          "e": "aggTrade",
+          "E": 1795699191238,
+          "a": 3552459705,
+          "s": "BTCUSDT",
+          "p": "60804.90",
+          "q": "0.010",
+          "nq": "0.010",
+          "f": 8344801478,
+          "l": 8344801478,
+          "T": 1795699191087,
+          "m": true,
+          "st": 1
+        }
+      },
+      "T_le_E_rate": 1.0,
+      "ids_strictly_increasing": true,
+      "ids_contiguous": true
+    }
+  },
+  {
+    "name": "ws_forceOrder",
+    "ok": true,
+    "detail": {
+      "n": 6,
+      "parsed": 6,
+      "samples": [
+        {
+          "stream": "!forceOrder@arr",
+          "data": {
+            "e": "forceOrder",
+            "E": 1795699208204,
+            "o": {
+              "s": "SSVUSDT",
+              "S": "BUY",
+              "o": "LIMIT",
+              "f": "IOC",
+              "q": "67.69",
+              "p": "2.705000",
+              "ap": "2.666000",
+              "X": "FILLED",
+              "l": "67.69",
+              "z": "67.69",
+              "T": 1795699207201,
+              "ps": "SSVUSDT",
+              "st": 1
+            }
+          }
+        },
+        {
+          "stream": "!forceOrder@arr",
+          "data": {
+            "e": "forceOrder",
+            "E": 1795699218207,
+            "o": {
+              "s": "RIFUSDT",
+              "S": "SELL",
+              "o": "LIMIT",
+              "f": "IOC",
+              "q": "653",
+              "p": "0.0416800",
+              "ap": "0.0422900",
+              "X": "FILLED",
+              "l": "653",
+              "z": "653",
+              "T": 1795699217205,
+              "ps": "RIFUSDT",
+              "st": 1
+            }
+          }
+        },
+        {
+          "stream": "!forceOrder@arr",
+          "data": {
+            "e": "forceOrder",
+            "E": 1795699228228,
+            "o": {
+              "s": "POPCATUSDT",
+              "S": "BUY",
+              "o": "LIMIT",
+              "f": "IOC",
+              "q": "22464",
+              "p": "0.0282900",
+              "ap": "0.0278642",
+              "X": "FILLED",
+              "l": "1726",
+              "z": "22464",
+              "T": 1795699228190,
+              "ps": "POPCATUSDT",
+              "st": 1
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "rest_aggTrades",
+    "ok": true,
+    "detail": {
+      "n": 1000,
+      "keys": [
+        "T",
+        "a",
+        "f",
+        "l",
+        "m",
+        "nq",
+        "p",
+        "q"
+      ],
+      "sample": {
+        "a": 3552454705,
+        "p": "60802.20",
+        "q": "0.001",
+        "nq": "0.001",
+        "f": 8344789489,
+        "l": 8344789489,
+        "T": 1795698834716,
+        "m": true
+      },
+      "first_id_equals_fromId": true,
+      "contiguous": true,
+      "used_weight_1m": [
+        "20",
+        "40"
+      ],
+      "weight_delta": 20
+    }
+  },
+  {
+    "name": "rest_limits",
+    "ok": true,
+    "detail": {
+      "limit_1001": {
+        "status": 400,
+        "body": "{\"code\":-1130,\"msg\":\"Data sent for parameter 'limit' is not valid.\"}"
+      },
+      "fromId_older_than_48h": "RestLookbackExceededError: https://fapi.binance.com/fapi/v1/aggTrades: {\"code\":-4166,\"msg\":\"Search window is restricted to recent 2 days only.\"}",
+      "rate_limits": [
+        {
+          "rateLimitType": "REQUEST_WEIGHT",
+          "interval": "MINUTE",
+          "intervalNum": 1,
+          "limit": 2400
+        },
+        {
+          "rateLimitType": "ORDERS",
+          "interval": "MINUTE",
+          "intervalNum": 1,
+          "limit": 1200
+        },
+        {
+          "rateLimitType": "ORDERS",
+          "interval": "SECOND",
+          "intervalNum": 10,
+          "limit": 300
+        }
+      ]
+    }
+  },
+  {
+    "name": "ws_vs_rest",
+    "ok": true,
+    "detail": {
+      "compared": 519,
+      "identical": 519
+    }
+  }
+]

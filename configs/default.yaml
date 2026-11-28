@@ -1,0 +1,391 @@
+# FLOWLEVELS versioned config. Bump `version` on any change that affects results.
+# The config hash (flowlevels.config.config_hash) is recorded in every report.
+version: 5
+
+symbols:
+  BTCUSDT:
+    exchange_tick: 0.1
+    bucket: 10.0     # footprint bucket, USD (see docs/DECISIONS.md D-004)
+    tpo_tick: 10.0
+  ETHUSDT:
+    exchange_tick: 0.01
+    bucket: 0.5
+    tpo_tick: 0.5
+  # ITERATION-5 symbols (candles only). bucket = tpo_tick = 1.5 bps x median 1m close of window A,
+  # rounded up to the Binance tick (pre-registered rule; values in DECISIONS D-044).
+  SOLUSDT:
+    exchange_tick: 0.01
+    bucket: 0.03
+    tpo_tick: 0.03
+  BNBUSDT:
+    exchange_tick: 0.01
+    bucket: 0.11
+    tpo_tick: 0.11
+  XRPUSDT:
+    exchange_tick: 0.0001
+    bucket: 0.0004
+    tpo_tick: 0.0004
+  DOGEUSDT:
+    exchange_tick: 0.00001
+    bucket: 0.00003
+    tpo_tick: 0.00003
+
+retention:
+  raw_live_ticks_days: 7
+  footprint_1m_days: 30
+
+footprint:
+  imb_ratio: 3.0
+  imb_min_volume: 0.0
+  stack_n: 3
+  baseline_days: 20
+  baseline_slot_minutes: 30
+  baseline_min_samples: 5
+
+levels:
+  tpo_period_minutes: 30
+  value_area_pct: 0.70
+  naked_poc_lookback_days: 10
+  # HVN/LVN (v2, D-028): peaks/valleys of the smoothed volume profile ranked by prominence,
+  # at least hvn_min_distance_k_atr x ATR(1h at session start) apart, top N of each kind.
+  hvn_smoothing_rows: 5
+  hvn_min_prominence: 0.05     # fraction of the smoothed profile max
+  hvn_min_distance_k_atr: 0.5
+  hvn_top_n: 3
+  lvn_top_n: 3
+  atr_period_1h: 14
+  # Confluence (v2, D-029): clusters anchored on their strongest member, members within
+  # confluence_k_atr x ATR of the anchor, hard cap on zone width (incl. tolerance).
+  confluence_k_atr: 0.25
+  zone_tolerance_k_atr: 0.10
+  zone_max_width_k_atr: 0.5
+  weights: {}        # level_type -> weight; default 1.0
+
+data_quality:
+  # aggTrade ids can be contiguous across a hole in the data (2026-10-27 00:02:46-00:30:05
+  # UTC, docs/DATA_SOURCES.md), so time silences are checked as well (D-026).
+  max_trade_silence_s: 60
+  # Fill holes from the raw per-fill `trades` archive, verified against 1m klines; holes that
+  # cannot be filled stay excluded (D-031). Owner decision 2026-11-27 (D-032).
+  repair_holes_from_trades: true
+
+costs:
+  # Signals come from Binance USD-M; trades are executed on OKX EEA inverse perpetuals
+  # BTC-USD-SWAP / ETH-USD-SWAP with USDC collateral (owner, 2026-11-27, D-033). Fees are
+  # fractions of notional per side. Sources: docs/DATA_SOURCES.md.
+  fee_profile: okx_eu_inverse
+  fee_profiles:
+    okx_eu_inverse:
+      venue: OKX EEA
+      tier: Owner account, BTC-USD-SWAP / ETH-USD-SWAP
+      maker_fee: 0.0002
+      taker_fee: 0.0005
+      as_of: "2026-11-27"
+      source: UNCONFIRMED placeholder = OKX regular-tier rates until the owner gives the account's actual rates (D-033)
+    okx_regular:
+      venue: OKX
+      tier: Regular user (non-VIP), futures/perpetual swaps
+      maker_fee: 0.0002
+      taker_fee: 0.0005
+      as_of: "2026-11-26"
+      source: OKX notice 2026-03-24 (effective 2026-04-08), DATA_SOURCES.md "OKX fees"
+    binance_regular:
+      venue: Binance
+      tier: Regular user (VIP 0), USD-M futures, no BNB discount
+      maker_fee: 0.0002
+      taker_fee: 0.0005
+      as_of: "2025"
+      source: prior knowledge, UNVERIFIED (DATA_SOURCES.md "Binance fees")
+  # Adverse slippage per side. Default 1 footprint bucket (owner, 2026-11-27): 10 USD BTC,
+  # 0.5 USD ETH. The OKX tick scenarios are optimistic sensitivities (2 ticks = 0.2 USD BTC).
+  slippage: bucket1
+  slippage_scenarios:
+    bucket1: {unit: bucket, amount: 1}
+    okx_2tick: {unit: exec_tick, amount: 2}
+    okx_4tick: {unit: exec_tick, amount: 4}
+  execution_instruments:
+    BTCUSDT:
+      venue: OKX EEA
+      inst_id: BTC-USD-SWAP
+      contract_type: inverse
+      contract_value: 100
+      contract_value_ccy: USD
+      settle_ccy: BTC
+      tick: 0.1
+      min_size_contracts: 0.1
+      status: confirmed by owner
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments (DATA_SOURCES.md)
+    ETHUSDT:
+      venue: OKX EEA
+      inst_id: ETH-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: ETH
+      tick: 0.01
+      min_size_contracts: 1
+      status: confirmed by owner
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments (DATA_SOURCES.md)
+    SOLUSDT:
+      venue: OKX EEA
+      inst_id: SOL-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: SOL
+      tick: 0.01
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    BNBUSDT:
+      venue: OKX EEA
+      inst_id: BNB-USDT-SWAP
+      contract_type: linear
+      contract_value: 0.01
+      contract_value_ccy: BNB
+      settle_ccy: USDT
+      tick: 0.01
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed (no inverse BNB swap listed)
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    XRPUSDT:
+      venue: OKX EEA
+      inst_id: XRP-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: XRP
+      tick: 0.0001
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+    DOGEUSDT:
+      venue: OKX EEA
+      inst_id: DOGE-USD-SWAP
+      contract_type: inverse
+      contract_value: 10
+      contract_value_ccy: USD
+      settle_ccy: DOGE
+      tick: 1e-05
+      min_size_contracts: 1
+      status: public API only, not owner-confirmed
+      as_of: "2026-11-27"
+      source: eea.okx.com /api/v5/public/instruments?instType=SWAP (ITERATION-5 pre-registration)
+
+# ---- Phase 3 (config v3). Defaults fixed before any outcome was seen (D-035).
+signals:
+  resolutions: [1m, 3m, 5m, 15m]
+  primary_resolution: 5m
+  window_bars: 4
+  score_threshold: 1.0
+  weights: {absorption: 1.0, exhaustion: 1.0, delta_divergence: 1.0, stacked_imbalance: 1.0, trapped: 1.0}
+  absorption: {vol_z_min: 1.5, delta_frac_min: 0.15, close_pos_min: 0.5}
+  exhaustion: {extreme_frac_max: 0.10, min_buckets: 3, close_pos_min: 0.5, lookback_bars: 3}
+  delta_divergence: {lookback_bars: 3}
+  trapped: {delta_z_min: 1.5, close_pos_max: 0.33}
+  dynamic_min_minutes: 30
+
+context:
+  lookback_h: 24
+  trend_k_atr: 2.0
+
+trade_model:
+  stop_buffer_ticks: 2
+  min_stop_k_atr: 0.1
+  targets_r: [1.0, 2.0, 3.0]
+  max_hold_minutes: 240
+  primary_exit: 2R
+
+research:
+  tuning_days: 60
+  holdout_days: 274
+  grid_window_bars: [2, 4, 6]
+  grid_score_threshold: [1.0, 2.0, 3.0]
+  min_n_per_group: 30
+  bootstrap_reps: 2000
+  ci_level: 0.90
+  power: 0.80
+  seed: 42
+  gate_uplift_r: 0.15
+
+# ---- ITERATION-1 (DECISIONS "ITERATION-1", pre-registered 2026-11-27). Level-to-level trades.
+iteration1:
+  resolution: 5m
+  grid_score_threshold: [2.0, 3.0]
+  grid_window_bars: [2, 3]
+  grid_min_stop_k_atr: [0.5, 0.75, 1.0]
+  min_stop_cost_mult: 3.0       # minimum stop >= 3 x round-trip cost (default scenario)
+  min_target_r: 1.5             # take the trade only if target distance >= 1.5 x stop
+  time_stop_bars: 48            # 48 x 5m = 4 h
+  first_touch_only: true
+  min_zone_score: 1.0           # frozen in-sample median (2026-11-27, zones only; D-037)
+  min_treatment_trades: 100
+  secondary_exits: [2R, 3R]
+
+# ---- Owner's Supply Zone bot (docs/strategies/SUPPLY_ZONE_SPEC.md). Values = live code.
+supply_zone:
+  n_1h: 300
+  n_4h: 150
+  min_1h: 100
+  min_4h: 50
+  scan_delay_s: 180            # emulated scan at HH:03 (median live delay, A1)
+  regime_ema_fast: 20
+  regime_ema_slow: 50
+  regime_slope_bars: 10
+  regime_slope_threshold: 0.05 # BTC/ETH
+  regime_threshold_default: 0.1  # code default for instruments not in the bot's dict
+  regime_thresholds: {BTC: 0.05, ETH: 0.05, SOL: 0.05, BNB: 0.05, XRP: 0.05, ADA: 0.05,
+    DOT: 0.05, LINK: 0.05, LTC: 0.08, ATOM: 0.08, NEAR: 0.08, UNI: 0.08, AAVE: 0.08,
+    ARB: 0.08, OP: 0.08, INJ: 0.08, SUI: 0.08, SEI: 0.08, ZEC: 0.08, ETC: 0.08, BCH: 0.08,
+    FIL: 0.08, WLD: 0.08, RUNE: 0.08}
+  recalc_interval: 50
+  zone_lookback: 50
+  zone_body_atr: 1.2
+  zone_tolerance_pct: 0.5
+  vp_lookback_bars: 100
+  vp_bins: 50
+  vp_poc_tolerance_pct: 1.5
+  fvg_min_gap_pct: 0.1
+  fvg_max_age_bars: 50
+  fvg_fill_threshold_pct: 80.0
+  rsi_period: 14
+  rsi_short_min: 55.0
+  rsi_long_max: 45.0
+  atr_period: 14
+  min_rr: 1.5
+  atr_sl_mult: 1.5
+  atr_tp_mult: 3.0
+  long_tp_factor: 2.0          # core LONG target = top + 2 x atr_tp_mult x ATR (asymmetric)
+  volume_spike_lookback: 20
+  volume_spike_multiplier: 1.5
+  local_extreme_lookback: 20
+  local_extreme_max_age: 3
+  multiday_extreme_lookback: 100
+  ema_distance_period: 20
+  ema_distance_atr_multiplier: 3.0
+  sl_atr_period: 14
+  swing_lookback: 20
+  sl_zone_buffer_atr: 0.3
+  sl_swing_buffer_atr: 0.2
+  tp2_atr_mult: 1.5
+  partial_tp_min_rr: 1.5
+  min_rr_required: 3.0
+  tp1_size: 0.33
+  chandelier_lookback: 10
+  chandelier_atr_mult: 2.5
+  cooldown_hours: 48
+
+# ---- ITERATION-2 (DECISIONS "ITERATION-2", pre-registered 2026-11-27).
+iteration2:
+  resolution: 5m
+  grid_score_threshold: [1.0, 2.0, 3.0]
+  grid_window_bars: [2, 3]
+  min_confirmed_trades: 30
+  min_total_trades: 30
+  gate_expectancy_r: 0.0
+  gate_uplift_r: 0.15
+
+# ---- MASTER-PLAN windows (DECISIONS "MASTER-PLAN", 2026-11-27). The hold-out is never loaded.
+plan:
+  a_start: 2024-12-28
+  a_end: 2025-12-27
+  holdout_start: 2025-12-28
+  holdout_end: 2026-09-27
+  b_start: 2026-09-28
+  b_end: 2026-11-26
+  warmup_days: 40
+  min_trades: 60
+  sensitivities: [default, maker_entry, slip_okx_2tick, slip_okx_4tick]
+
+# ---- ITERATION-4 (FINAL), pre-registered 2026-11-27: docs/research/ITERATION-4-PREREG.md.
+# Grid bias x confirmation x min_rr = 8 configurations, no others.
+iteration4:
+  bias: [b1, b2]
+  confirmation: [c1, c2]
+  min_rr: [2.0, 3.0]
+  ema_period: 50
+  ema_slope_bars: 3
+  fractal_n: 2
+  zone_timeframes: [1h, 30m]
+  zone_max_age_h: 168
+  sweep_ticks: 1
+  top_third: 0.6666666666666666
+  orderflow_res: 30m
+  orderflow_detectors: [absorption, exhaustion]
+  min_stop_k_atr: 0.25
+  min_stop_cost_mult: 3.0
+  time_stop_minutes: 1440
+  footprint_warmup_days: 20
+  chunk_rows: 1000000
+  max_disk_pct: 70.0
+
+# ---- ITERATION-5 (FINAL, binding hold-out), pre-registered 2026-11-27:
+# docs/research/ITERATION-5-PREREG.md. Grid trigger x stop_k_atr x second_exit = 8, no others.
+iteration5:
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT]
+  trigger: [T1, T2]
+  stop_k_atr: [0.25, 0.5]
+  second_exit: [lvl, trail]
+  warmup_days: 150
+  ema_period: 50
+  ema_slope_bars: 3
+  fractal_n: 2
+  zone_timeframes: [1h, 30m]
+  zone_max_age_h: 168
+  sweep_ticks: 1
+  top_third: 0.6666666666666666
+  sweep_range_k_atr15: 1.5     # T1: sweep candle range >= 1.5 x ATR(15m)
+  atr15_period: 14
+  t2_confirm_bars: 3           # T2: touch bar + next 2 bars
+  pin_wick_body: 2.0
+  pin_close_third: 0.6666666666666666
+  min_stop_k_atr: 0.5
+  min_stop_cost_mult: 3.0
+  tp1_min_r: 1.0
+  tp1_fraction: 0.5
+  trail_k_atr: 1.5
+  time_stop_minutes: 2880      # 48 h
+  min_trades: 100
+  min_positive_symbols: 4
+
+# Live paper forward test (DECISIONS PAPER-PLAN, docs/PAPER_TEST.md). Rules = iteration5; each
+# variant only picks the trigger, the stop anchor and the second-half exit. A variant's version
+# hashes its rule inputs (variant, iteration5, levels, symbols, costs), not the ops fields below.
+paper:
+  variants:
+    - {id: a, trigger: T2, stop: far, k: 0.5, exit2: trail}
+    - {id: b, trigger: T2, stop: far, k: 0.5, exit2: lvl}
+    - {id: c, trigger: T2, stop: wick, k: 0.1, exit2: trail}   # wick of the 30m confirmation candle
+    - {id: d, trigger: T1, stop: far, k: 0.5, exit2: lvl}
+  backtest:            # A+B, default costs (reference run 20261127T211931Z-paperref-a086f3e1, D-046)
+    a: {n: 218, exp_r: -0.0790, exp_bps: -7.73, win_rate: 0.3991, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    b: {n: 216, exp_r: -0.1095, exp_bps: -7.28, win_rate: 0.3843, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    c: {n: 631, exp_r: -0.2207, exp_bps: -14.05, win_rate: 0.3471, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+    d: {n: 144, exp_r: -0.2300, exp_bps: -12.60, win_rate: 0.3542, source: "A+B in-sample, run 20261127T211931Z-paperref"}
+  poll_offset_s: 3.0         # poll REST klines this many seconds after each minute
+  poll_limit: 5              # klines per poll (REST weight 1)
+  poll_retries: 3            # re-polls in the same minute when another symbol already shows a newer
+                             # minute (stale REST snapshot); costs REST weight 1 each
+  poll_retry_s: 2.0          # seconds between those re-polls
+  backfill_page: 1000        # klines per backfill page (REST weight 5)
+  backfill_pace_s: 1.0
+  flush_minutes: 15          # persist the live kline store
+  chart_bars: 400            # bars per timeframe in the dashboard chart cache
+  stall_alert_minutes: 5     # alert if a symbol has no new closed minute for this long
+  heartbeat_stale_minutes: 3 # web process alerts if the engine heartbeat is older
+  disk_alert_pct: 70.0
+  verify_minutes: 15         # dashboard: independent cross-check every N minutes (flowlevels verify)
+  verify_rel_tol: 1.0e-9     # max relative difference engine vs reference (EMA float rounding)
+  verify_history_days: 14    # TPO levels of the last N days, rule code vs reference
+  summary_timezone: Europe/Warsaw
+  summary_weekday: 6         # Sunday
+  summary_time: "20:00"
+  ci_min_trades: 10          # show the 90 % CI from this many closed trades
+  freeze_trades: 30          # no rule changes before this many closed trades
+  decision_trades: 50        # real money only considered from here (owner decision)
+  ci_lower_min_r: -0.1
